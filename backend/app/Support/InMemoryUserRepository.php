@@ -19,7 +19,7 @@ class InMemoryUserRepository
             1 => [
                 'id' => 1,
                 'name' => 'Admin',
-                'email' => 'admin@local.test',
+                'email' => 'gustavolimadossantos643@gmail.com',
                 'password' => Hash::make('admin123'),
                 'role' => 'admin',
                 'is_active' => true,

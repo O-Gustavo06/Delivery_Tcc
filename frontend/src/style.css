@@ -94,7 +94,7 @@ body {
 .nav-item {
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.78);
+  color: rgba(250, 247, 247, 0.78);
   padding: 13px 16px;
   border-radius: 16px;
   text-align: left;
@@ -129,9 +129,17 @@ body {
 }
 
 .sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: auto;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.5);
-  margin-top: auto;
+}
+
+.btn-logout {
+  width: 100%;
+  justify-content: center;
 }
 
 .app-main {
@@ -434,6 +442,101 @@ body {
   padding: 60px 20px;
 }
 
+.login-card {
+  display: grid;
+  gap: 18px;
+  max-width: 420px;
+  margin: 40px auto;
+}
+
+.login-card h2 {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 24px;
+}
+
+.login-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.login-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.login-error {
+  min-height: 18px;
+  font-size: 12.5px;
+  color: var(--danger);
+}
+
+.login-footer {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.users-card h2 {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: 20px;
+}
+
+.users-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 20px;
+}
+
+.users-table {
+  display: grid;
+  gap: 10px;
+}
+
+.users-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1.6fr 0.6fr 0.6fr;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  font-size: 13.5px;
+}
+
+.users-head {
+  background: var(--panel-soft);
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.users-form {
+  display: grid;
+  gap: 12px;
+}
+
+.users-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.users-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .fade-in {
   animation: fadeUp 0.5s ease both;
   animation-delay: calc(var(--i) * 80ms);
@@ -469,6 +572,10 @@ body {
 
   .cards,
   .orders {
+    grid-template-columns: 1fr;
+  }
+
+  .users-grid {
     grid-template-columns: 1fr;
   }
 }
