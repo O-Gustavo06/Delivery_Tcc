@@ -13,7 +13,7 @@ Route::prefix('auth')->group(function () {
 
 Route::prefix('admin')->middleware(['auth.api', 'role:admin'])->group(function () {
     Route::get('users', [AdminUserController::class, 'index']);
-    Route::post('users', [AdminUserController::class, 'store']);
+    Route::post('users/create', [AdminUserController::class, 'store']);
     Route::patch('users/{userId}', [AdminUserController::class, 'update']);
     Route::delete('users/{userId}', [AdminUserController::class, 'destroy']);
 

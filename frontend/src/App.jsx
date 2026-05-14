@@ -9,7 +9,8 @@ import Delivery from './pages/Delivery.jsx'
 import Financeiro from './pages/Financeiro.jsx'
 import Relatorios from './pages/Relatorios.jsx'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api'
+const API_BASE =
+  import.meta.env.VITE_API_BASE || `http://${window.location.hostname}:8000/api`
 const DEMO_CREDENTIALS = {
   email: 'gustavolimadossantos643@gmail.com',
   password: 'admin123',
@@ -184,26 +185,30 @@ export default function App() {
   }, [apiToken])
 
   const loginWithCredentials = useCallback(async (email, password) => {
-    const response = await fetch(`${API_BASE}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    })
+    try {
+      const response = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
 
-    if (!response.ok) {
-      return { ok: false, message: 'Credenciais invalidas.' }
+      if (!response.ok) {
+        return { ok: false, message: 'Credenciais invalidas.' }
+      }
+
+      const payload = await response.json()
+      if (!payload.token) {
+        return { ok: false, message: 'Token nao retornado.' }
+      }
+
+      window.localStorage.setItem('adminToken', payload.token)
+      setApiToken(payload.token)
+      setIsAuthenticated(true)
+
+      return { ok: true, message: '' }
+    } catch {
+      return { ok: false, message: 'Nao foi possivel conectar ao servidor.' }
     }
-
-    const payload = await response.json()
-    if (!payload.token) {
-      return { ok: false, message: 'Token nao retornado.' }
-    }
-
-    window.localStorage.setItem('adminToken', payload.token)
-    setApiToken(payload.token)
-    setIsAuthenticated(true)
-
-    return { ok: true, message: '' }
   }, [])
 
   const logout = useCallback(async () => {
@@ -301,7 +306,7 @@ export default function App() {
         return { ok: false, message: 'Sem token de acesso.' }
       }
 
-      const response = await fetch(`${API_BASE}/admin/users`, {
+      const response = await fetch(`${API_BASE}/admin/users/create`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
