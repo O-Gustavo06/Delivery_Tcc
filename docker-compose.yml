@@ -1,0 +1,49 @@
+services:
+  db:
+    image: mariadb:11
+    container_name: restaurante_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: estudos
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./backend/docker/mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build:
+      context: ./backend
+    container_name: restaurante_app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/var/www/html
+      # php artisan serve reabre o arquivo .env do disco a cada request (nao so herda a env
+      # var do processo pai) - por isso precisa sobrepor .env.docker DIRETO no caminho /.env,
+      # sem tocar no backend/.env que o XAMPP continua usando fora do Docker.
+      - ./backend/.env.docker:/var/www/html/.env:ro
+      - ./backend/.env.testing.docker:/var/www/html/.env.testing:ro
+      # vendor/storage/bootstrap-cache ficam em volumes nativos do Docker, nao no bind mount
+      # do Windows: I/O de milhares de arquivos pequenos (autoload, sessao, cache, log) por um
+      # bind mount Windows<->WSL2 e MUITO mais lento que um volume nativo (chegava a 20-30s por
+      # request). Codigo continua editavel ao vivo via bind mount; so essas 3 pastas sao rapidas.
+      - app_vendor:/var/www/html/vendor
+      - app_storage:/var/www/html/storage
+      - app_bootstrap_cache:/var/www/html/bootstrap/cache
+
+volumes:
+  db_data:
+  app_vendor:
+  app_storage:
+  app_bootstrap_cache:
