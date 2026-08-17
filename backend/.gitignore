@@ -1,6 +1,5 @@
 *.log
 .DS_Store
-CLAUDE.md
 .env
 .env.docker
 .env.testing.docker
