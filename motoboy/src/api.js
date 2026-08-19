@@ -1,10 +1,11 @@
 // Pagina servida via HTTPS nao pode chamar API em HTTP puro (mixed content bloqueado
-// pelo navegador), entao acompanha o protocolo da propria pagina e usa o proxy HTTPS
-// (local-ssl-proxy, porta 8443) quando ela estiver em HTTPS.
+// pelo navegador). Em vez de depender de um proxy HTTPS externo rodando numa porta separada,
+// usa caminho relativo (/api) quando a pagina esta em HTTPS - o proprio Vite (vite.config.js)
+// ja tem um proxy de /api pro backend em http://localhost:8000, sem precisar de mais nada rodando.
 const isHttps = window.location.protocol === 'https:'
 export const API_BASE =
   import.meta.env.VITE_API_BASE ||
-  `${isHttps ? 'https' : 'http'}://${window.location.hostname}:${isHttps ? 8443 : 8000}/api`
+  (isHttps ? '/api' : `http://${window.location.hostname}:8000/api`)
 
 const TOKEN_KEY = 'motoboyToken'
 
