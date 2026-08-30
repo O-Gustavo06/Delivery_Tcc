@@ -120,7 +120,9 @@ export default function Entrega({ orders, deliveryData, onFetchEntregadorEntrega
                   <span>{courier.zone}</span>
                   <strong>{courier.name}</strong>
                   <p>{courier.status}</p>
-                  <span>{courier.deliveries} entregas • nota {courier.rating}</span>
+                  <span>
+                    {courier.deliveries} entregas • {courier.rating ? `nota ${courier.rating} ⭐ (${courier.qtdAvaliacoes})` : 'sem avaliações ainda'}
+                  </span>
                 </button>
               ))}
             </div>

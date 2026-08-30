@@ -28,6 +28,7 @@ class PedidoOnlineTest extends TestCase
         return array_merge([
             'nome' => 'Cliente Online',
             'telefone' => '11900007777',
+            'tipo_entrega' => 'delivery',
             'cep' => '01310-100',
             'endereco' => 'Rua das Palmeiras, 200',
             'payment_method' => 'pix',
@@ -73,6 +74,56 @@ class PedidoOnlineTest extends TestCase
             'latitude_destino' => -23.5614,
             'longitude_destino' => -46.6558,
         ]);
+    }
+
+    public function test_pedido_para_retirada_no_balcao_nao_exige_endereco_nem_gera_entrega(): void
+    {
+        $empresa = $this->criarEmpresa();
+        $categoria = $this->criarCategoria($empresa);
+        $produto = $this->criarProduto($empresa, $categoria, ['vl_preco_base' => 25]);
+
+        $response = $this->postJson('/api/pedir', [
+            'nome' => 'Cliente Retirada',
+            'telefone' => '11900001111',
+            'tipo_entrega' => 'retirada',
+            'payment_method' => 'pix',
+            'items' => [['id_produto' => $produto->id_produto, 'qty' => 1]],
+        ]);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('total', 25)
+            ->assertJsonPath('delivery_number', null)
+            ->assertJsonPath('tipo_entrega', 'retirada')
+            ->assertJsonPath('status', 'aguardando_confirmacao');
+
+        $idPedido = \App\Models\Pedido::where('vl_total', 25)->value('id_pedido');
+
+        $this->assertDatabaseHas('pedido', [
+            'id_pedido' => $idPedido,
+            'tipo_pedido' => 'BALCAO',
+            'canal_origem' => 'ONLINE',
+            'vl_taxa_entrega' => 0,
+            'nr_pedido_delivery' => null,
+            'ds_observacao' => null,
+        ]);
+
+        $this->assertDatabaseMissing('entrega', ['id_pedido' => $idPedido]);
+
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'nominatim.openstreetmap.org'));
+    }
+
+    public function test_loja_fechada_nao_deixa_criar_pedido_online(): void
+    {
+        $empresa = $this->criarEmpresa(['fl_aberto' => false]);
+        $categoria = $this->criarCategoria($empresa);
+        $produto = $this->criarProduto($empresa, $categoria, ['vl_preco_base' => 15]);
+
+        $response = $this->postJson('/api/pedir', $this->pedidoPayload([
+            'items' => [['id_produto' => $produto->id_produto, 'qty' => 1]],
+        ]));
+
+        $response->assertStatus(422);
+        $this->assertDatabaseMissing('pedido', ['vl_total' => 15]);
     }
 
     public function test_busca_cliente_por_telefone_devolve_nome_de_quem_ja_pediu(): void

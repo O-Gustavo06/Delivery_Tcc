@@ -1,19 +1,101 @@
-import React from 'react'
+import React, { useState } from 'react'
 
-export default function Financeiro({ financeData }) {
+const TYPE_LABEL = { mesa: 'Mesa', delivery: 'Delivery', balcao: 'Balcão' }
+const TYPE_BADGE = { mesa: 'badge-blue', delivery: 'badge-orange', balcao: 'badge-muted' }
+
+const formatMoney = (value) =>
+  Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+function PagamentosPendentesList({ pendingPayments, onVerPedido }) {
+  if (pendingPayments.length === 0) {
+    return (
+      <article className="card section-card fade-in">
+        <div className="section-head">
+          <div>
+            <h2>Pagamentos pendentes</h2>
+            <p>Nenhum pagamento pendente no momento.</p>
+          </div>
+        </div>
+      </article>
+    )
+  }
+
+  return (
+    <article className="card section-card fade-in">
+      <div className="section-head">
+        <div>
+          <h2>Pagamentos pendentes</h2>
+          <p>Toque num pedido pra abrir ele direto em Pedidos.</p>
+        </div>
+        <span className="badge badge-sun">{pendingPayments.length}</span>
+      </div>
+      <div className="data-table">
+        {pendingPayments.map((item) => (
+          <button
+            key={item.id_pedido}
+            type="button"
+            className="data-row"
+            style={{
+              gridTemplateColumns: '0.5fr 0.7fr 1.2fr 0.6fr',
+              cursor: 'pointer',
+              border: 'none',
+              width: '100%',
+              textAlign: 'left',
+              font: 'inherit',
+              color: 'inherit',
+            }}
+            onClick={() => onVerPedido(item.number)}
+          >
+            <span className="order-number">#{item.number}</span>
+            <span className={`badge ${TYPE_BADGE[item.type] || 'badge-muted'}`}>
+              {item.type === 'mesa' && item.table_number != null
+                ? `Mesa ${item.table_number}`
+                : TYPE_LABEL[item.type] || item.type}
+            </span>
+            <span>{item.customer_name}</span>
+            <strong>{formatMoney(item.value)}</strong>
+          </button>
+        ))}
+      </div>
+    </article>
+  )
+}
+
+export default function Financeiro({ financeData, onVerPedido, onAtualizarChecklist }) {
+  const [mostrarPendentes, setMostrarPendentes] = useState(false)
+  const pendingPayments = financeData.pendingPayments || []
+
   return (
     <>
       <section className="cards">
-        {financeData.kpis.map((item, index) => (
-          <div className="card metric fade-in" style={{ '--i': index }} key={item.id}>
-            <div>
-              <span>{item.label}</span>
-              <strong>{item.value}</strong>
-            </div>
-            <div className={`metric-icon badge-${item.tone}`}>{item.label.slice(0, 2).toUpperCase()}</div>
-          </div>
-        ))}
+        {financeData.kpis.map((item, index) => {
+          const clicavel = item.id === 'payable' && onVerPedido
+          const Wrapper = clicavel ? 'button' : 'div'
+
+          return (
+            <Wrapper
+              className="card metric fade-in"
+              style={{
+                '--i': index,
+                ...(clicavel ? { cursor: 'pointer', border: 'none', width: '100%', textAlign: 'left', font: 'inherit', color: 'inherit' } : {}),
+              }}
+              key={item.id}
+              type={clicavel ? 'button' : undefined}
+              onClick={clicavel ? () => setMostrarPendentes((prev) => !prev) : undefined}
+            >
+              <div>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+              </div>
+              <div className={`metric-icon badge-${item.tone}`}>{item.label.slice(0, 2).toUpperCase()}</div>
+            </Wrapper>
+          )
+        })}
       </section>
+
+      {mostrarPendentes && (
+        <PagamentosPendentesList pendingPayments={pendingPayments} onVerPedido={onVerPedido} />
+      )}
 
       <section className="page-grid page-grid-2-1">
         <div className="page-stack">
@@ -71,9 +153,13 @@ export default function Financeiro({ financeData }) {
             </div>
             <div className="check-list">
               {financeData.checklist.map((item) => (
-                <label className="check-item" key={item}>
-                  <input type="checkbox" defaultChecked={false} />
-                  <span>{item}</span>
+                <label className="check-item" key={item.id}>
+                  <input
+                    type="checkbox"
+                    checked={item.checked}
+                    onChange={(event) => onAtualizarChecklist(item.id, event.target.checked)}
+                  />
+                  <span>{item.label}</span>
                 </label>
               ))}
             </div>

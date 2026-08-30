@@ -21,6 +21,10 @@ class AdminDemoDataSeeder extends Seeder
             $courierIds = $this->ensureCouriers();
             $this->ensureOrders($companyId, $customerIds, $tableIds, $productIds, $courierIds);
             $this->ensureSnapshots();
+
+            $ingredientIds = $this->ensureIngredientes($companyId);
+            $this->ensureRecipes($productIds, $ingredientIds);
+            $this->ensureCompras($companyId, $ingredientIds);
         });
     }
 
@@ -34,7 +38,14 @@ class AdminDemoDataSeeder extends Seeder
         return (int) DB::table('empresa')->insertGetId([
             'nm_empresa' => 'Restaurante Modelo',
             'cnpj' => '1234567890',
-            'config_taxas_km' => json_encode(['base' => 6.5]),
+            'config_taxas_km' => json_encode([
+                'taxa_padrao' => 8,
+                'faixas' => [
+                    ['ate_km' => 3, 'valor' => 5],
+                    ['ate_km' => 6, 'valor' => 8],
+                    ['ate_km' => 10, 'valor' => 12],
+                ],
+            ]),
             'dt_cadastro' => now(),
             'dt_atualizacao' => now(),
         ]);
@@ -434,6 +445,190 @@ class AdminDemoDataSeeder extends Seeder
                     'tempo_estimado_min' => $order['delivery']['eta'],
                     'dt_cadastro' => now(),
                     'dt_atualizacao' => now(),
+                ]);
+            }
+        }
+    }
+
+    /** @return array<string,int> nome => id_ingrediente */
+    private function ensureIngredientes(int $companyId): array
+    {
+        $catalog = [
+            'Farinha de Trigo' => ['unidade' => 'kg', 'estoque' => 40],
+            'Queijo Mussarela' => ['unidade' => 'kg', 'estoque' => 25],
+            'Molho de Tomate' => ['unidade' => 'kg', 'estoque' => 20],
+            'Carne Bovina Moida' => ['unidade' => 'kg', 'estoque' => 30],
+            'Pao de Hamburguer' => ['unidade' => 'un', 'estoque' => 60],
+            'Batata' => ['unidade' => 'kg', 'estoque' => 50],
+            'Frango' => ['unidade' => 'kg', 'estoque' => 20],
+            'Embalagem Descartavel' => ['unidade' => 'un', 'estoque' => 200],
+        ];
+
+        $ids = [];
+        foreach ($catalog as $name => $info) {
+            $ingredient = DB::table('ingrediente')
+                ->where('id_empresa', $companyId)
+                ->where('nm_ingrediente', $name)
+                ->first();
+
+            if (!$ingredient) {
+                $ingredientId = DB::table('ingrediente')->insertGetId([
+                    'id_empresa' => $companyId,
+                    'nm_ingrediente' => $name,
+                    'unidade' => $info['unidade'],
+                    'fl_ativo' => 1,
+                    'qtd_atual' => $info['estoque'],
+                    'dt_cadastro' => now(),
+                ]);
+            } else {
+                $ingredientId = $ingredient->id_ingrediente;
+            }
+
+            $ids[$name] = (int) $ingredientId;
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Liga alguns produtos ja existentes no seed as suas receitas (produto_ingrediente),
+     * pra baixa automatica de estoque (AdminOrderController::baixarEstoquePorPedido) ter o
+     * que consumir numa demonstracao.
+     *
+     * @param array<string,int> $productIds
+     * @param array<string,int> $ingredientIds
+     */
+    private function ensureRecipes(array $productIds, array $ingredientIds): void
+    {
+        $recipes = [
+            'Pizza Calabresa' => [
+                ['Farinha de Trigo', 0.3],
+                ['Queijo Mussarela', 0.15],
+                ['Molho de Tomate', 0.1],
+            ],
+            'Hamburguer Artesanal' => [
+                ['Pao de Hamburguer', 1],
+                ['Carne Bovina Moida', 0.15],
+                ['Queijo Mussarela', 0.05],
+            ],
+            'Lanche X' => [
+                ['Pao de Hamburguer', 1],
+                ['Carne Bovina Moida', 0.12],
+            ],
+            'Batata Frita' => [
+                ['Batata', 0.2],
+            ],
+            'Batata Media' => [
+                ['Batata', 0.18],
+            ],
+            'File de Frango' => [
+                ['Frango', 0.2],
+            ],
+        ];
+
+        foreach ($recipes as $productName => $ingredients) {
+            if (!isset($productIds[$productName])) {
+                continue;
+            }
+
+            foreach ($ingredients as [$ingredientName, $qtde]) {
+                if (!isset($ingredientIds[$ingredientName])) {
+                    continue;
+                }
+
+                $exists = DB::table('produto_ingrediente')
+                    ->where('id_produto', $productIds[$productName])
+                    ->where('id_ingrediente', $ingredientIds[$ingredientName])
+                    ->exists();
+
+                if (!$exists) {
+                    DB::table('produto_ingrediente')->insert([
+                        'id_produto' => $productIds[$productName],
+                        'id_ingrediente' => $ingredientIds[$ingredientName],
+                        'qtde' => $qtde,
+                        'unidade' => 'kg',
+                    ]);
+                }
+            }
+        }
+    }
+
+    /**
+     * Duas compras de exemplo, pra tela "Compras e Lucros" nao abrir vazia. Nao usa o
+     * AdminEstoqueController (que ja incrementaria qtd_atual sozinho) - aqui o estoque inicial
+     * de ensureIngredientes() ja e o "resultado" dessas compras, entao so registra o historico
+     * (compra + compra_item + estoque_movimento ENTRADA) sem incrementar de novo.
+     *
+     * @param array<string,int> $ingredientIds
+     */
+    private function ensureCompras(int $companyId, array $ingredientIds): void
+    {
+        if (DB::table('compra')->count() > 0) {
+            return;
+        }
+
+        $adminId = (int) DB::table('usuario')->where('perfil', 'ADMIN')->value('id_usuario');
+        if (!$adminId) {
+            return;
+        }
+
+        $compras = [
+            [
+                'fornecedor' => 'Distribuidora Sao Paulo',
+                'descricao' => 'Reposicao semanal de insumos',
+                'dias_atras' => 5,
+                'itens' => [
+                    ['Farinha de Trigo', 20, 4.50],
+                    ['Queijo Mussarela', 10, 32.00],
+                    ['Molho de Tomate', 8, 9.80],
+                ],
+            ],
+            [
+                'fornecedor' => 'Acougue Central',
+                'descricao' => 'Compra de carnes e frango',
+                'dias_atras' => 2,
+                'itens' => [
+                    ['Carne Bovina Moida', 15, 28.90],
+                    ['Frango', 10, 14.50],
+                ],
+            ],
+        ];
+
+        foreach ($compras as $compra) {
+            $itens = array_values(array_filter($compra['itens'], fn ($item) => isset($ingredientIds[$item[0]])));
+            if (empty($itens)) {
+                continue;
+            }
+
+            $total = array_sum(array_map(fn ($item) => $item[1] * $item[2], $itens));
+            $dtCompra = now()->subDays($compra['dias_atras']);
+
+            $compraId = DB::table('compra')->insertGetId([
+                'id_empresa' => $companyId,
+                'id_usuario' => $adminId,
+                'ds_descricao' => $compra['descricao'],
+                'nm_fornecedor' => $compra['fornecedor'],
+                'vl_total' => round($total, 2),
+                'dt_compra' => $dtCompra,
+                'dt_cadastro' => now(),
+            ]);
+
+            foreach ($itens as [$ingredientName, $qtde, $valorUnitario]) {
+                DB::table('compra_item')->insert([
+                    'id_compra' => $compraId,
+                    'id_ingrediente' => $ingredientIds[$ingredientName],
+                    'qtde' => $qtde,
+                    'vl_unitario' => $valorUnitario,
+                    'vl_subtotal' => round($qtde * $valorUnitario, 2),
+                ]);
+
+                DB::table('estoque_movimento')->insert([
+                    'id_ingrediente' => $ingredientIds[$ingredientName],
+                    'tipo' => 'ENTRADA',
+                    'qtde' => $qtde,
+                    'custo_unitario' => $valorUnitario,
+                    'ds_motivo' => 'Compra #' . $compraId,
+                    'dt_movimento' => $dtCompra,
                 ]);
             }
         }

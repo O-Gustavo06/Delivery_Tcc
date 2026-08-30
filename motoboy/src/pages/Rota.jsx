@@ -66,6 +66,10 @@ function mapsUrl(stop) {
 
 function StopCard({ stop, isFirst, isLast, busy, onIniciar, onConcluir, onMove }) {
   const [codigo, setCodigo] = useState('')
+  const [confirmandoPagamento, setConfirmandoPagamento] = useState(false)
+
+  const valorFormatado = stop.vlFinal != null ? stop.vlFinal.toFixed(2).replace('.', ',') : null
+  const formaLabel = PAYMENT_LABEL[stop.forma] || stop.forma
 
   return (
     <div className="card order-card stop-card">
@@ -116,7 +120,7 @@ function StopCard({ stop, isFirst, isLast, busy, onIniciar, onConcluir, onMove }
           </button>
         )}
 
-        {stop.statusEntrega === 'EM_ROTA' && (
+        {stop.statusEntrega === 'EM_ROTA' && !confirmandoPagamento && (
           <div className="confirm-box">
             {stop.precisaCodigo && (
               <input
@@ -130,10 +134,41 @@ function StopCard({ stop, isFirst, isLast, busy, onIniciar, onConcluir, onMove }
               className="btn btn-primary"
               type="button"
               disabled={busy || (stop.precisaCodigo && !codigo.trim())}
-              onClick={() => onConcluir(stop.idEntrega, codigo.trim())}
+              onClick={() => setConfirmandoPagamento(true)}
             >
-              {busy ? 'Aguarde...' : 'Concluir entrega'}
+              Concluir entrega
             </button>
+          </div>
+        )}
+
+        {stop.statusEntrega === 'EM_ROTA' && confirmandoPagamento && (
+          <div className="payment-confirm">
+            <p>
+              {valorFormatado
+                ? `O valor de R$ ${valorFormatado} (${formaLabel}) foi pago?`
+                : 'Confirma que o pagamento desse pedido foi recebido?'}
+            </p>
+            {stop.forma === 'DINHEIRO' && stop.trocoCalculado != null && (
+              <p className="payment-confirm-troco">Lembrete: troco de R$ {stop.trocoCalculado.toFixed(2)}</p>
+            )}
+            <div className="payment-confirm-actions">
+              <button
+                className="btn btn-light"
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirmandoPagamento(false)}
+              >
+                Voltar
+              </button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                disabled={busy}
+                onClick={() => onConcluir(stop.idEntrega, codigo.trim())}
+              >
+                {busy ? 'Aguarde...' : 'Sim, foi pago'}
+              </button>
+            </div>
           </div>
         )}
 

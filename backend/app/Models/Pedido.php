@@ -33,6 +33,7 @@ class Pedido extends Model
         'vl_total',
         'vl_taxa_entrega',
         'ds_observacao',
+        'ds_nota_pedido',
         'dt_conclusao',
     ];
 

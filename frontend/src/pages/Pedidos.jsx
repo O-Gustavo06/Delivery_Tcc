@@ -292,11 +292,14 @@ export default function Pedidos({ orders, filters, setFilters, statusLabels, sta
                   {order.type === 'mesa' && order.tableNumber != null && (
                     <span className="badge badge-green">Mesa {order.tableNumber}</span>
                   )}
+                  {order.type === 'mesa' && order.paymentStatus === 'APROVADO' && (
+                    <span className="badge badge-green">✓ PAGO</span>
+                  )}
                   {order.type === 'delivery' && order.deliveryNumber != null && (
                     <span className="badge badge-blue">Delivery #{order.deliveryNumber}</span>
                   )}
-                  {order.channel === 'online' && <span className="badge badge-sun">Online</span>}
-                  <span className={`badge ${statusTone[order.status]}`}>
+                  {order.channel === 'online' && <span className="badge badge-green">Online</span>}
+                  <span className={`badge ${statusTone[order.status]} ${order.status === 'saiu_entrega' ? 'badge-blink' : ''}`}>
                     {statusLabels[order.status]}
                   </span>
                 </div>
@@ -310,12 +313,24 @@ export default function Pedidos({ orders, filters, setFilters, statusLabels, sta
                     {order.items.map((item, itemIndex) => (
                       <li key={`${item.name}-${itemIndex}`}>
                         {item.qty}x {item.name}
+                        {item.note && <em className="note-blink" style={{ fontStyle: 'normal' }}> — {item.note}</em>}
                       </li>
                     ))}
                   </ul>
                   {order.status === 'cancelado' && order.motivoCancelamento && (
                     <p style={{ color: 'var(--danger)', fontSize: 12.5, marginTop: 6 }}>
                       Recusado: {order.motivoCancelamento}
+                    </p>
+                  )}
+                  {order.note && (
+                    <p style={{ fontSize: 12.5, marginTop: 6 }}>
+                      Obs: <span className="note-blink">{order.note}</span>
+                    </p>
+                  )}
+                  {order.avaliacao && (
+                    <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 6 }}>
+                      Avaliação do cliente: {'⭐'.repeat(order.avaliacao.nota)}
+                      {order.avaliacao.comentario && ` — "${order.avaliacao.comentario}"`}
                     </p>
                   )}
                 </div>

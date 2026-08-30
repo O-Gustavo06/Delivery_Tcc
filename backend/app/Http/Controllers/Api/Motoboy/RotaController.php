@@ -19,11 +19,17 @@ class RotaController extends Controller
             return response()->json(['message' => 'Usuário autenticado não é um entregador.'], 403);
         }
 
-        $rota = $entregador->rotaAtiva()->with(
+        // So mostra na rota ativa as paradas ainda em andamento - uma vez entregue (ou
+        // cancelada), a parada sai daqui e passa a aparecer so no historico.
+        $rota = $entregador->rotaAtiva()->with([
+            'itens' => fn ($query) => $query->whereHas(
+                'entrega',
+                fn ($q) => $q->whereNotIn('status_entrega', ['ENTREGUE', 'CANCELADA']),
+            ),
             'itens.entrega.pedido.pagamento',
             'itens.entrega.pedido.itens.produto',
             'itens.entrega.pedido.cliente.usuario',
-        )->first();
+        ])->first();
 
         if (!$rota) {
             return response()->json(['message' => 'Nenhuma rota ativa no momento.'], 404);

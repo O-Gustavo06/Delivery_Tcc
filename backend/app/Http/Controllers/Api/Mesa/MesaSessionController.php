@@ -50,6 +50,10 @@ class MesaSessionController extends Controller
                 'numero' => $mesa->nr_mesa,
                 'capacidade' => $mesa->capacidade,
             ],
+            'empresa' => [
+                'nome' => $mesa->empresa?->nm_empresa,
+                'chave_pix' => $mesa->empresa?->chave_pix,
+            ],
             'comanda' => $comanda ? $this->comandaPayload($comanda) : null,
             'produtos' => $produtos->map(fn (Produto $produto) => [
                 'id' => $produto->id_produto,
@@ -265,13 +269,9 @@ class MesaSessionController extends Controller
             });
         }
 
-        $empresa = $mesa->empresa;
         $comanda = $comanda->fresh(['pedidos.itens.produto', 'pedidos.cliente.usuario']);
 
-        return response()->json([
-            ...$this->comandaPayload($comanda),
-            'chave_pix' => $formaPagamento === 'PIX' ? $empresa?->chave_pix : null,
-        ]);
+        return response()->json($this->comandaPayload($comanda));
     }
 
     private function comandaPayload(Comanda $comanda): array

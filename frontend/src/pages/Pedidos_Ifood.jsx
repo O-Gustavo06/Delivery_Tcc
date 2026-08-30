@@ -35,7 +35,7 @@ function LinkCardapioOnline() {
   )
 }
 
-export default function Peidos_Ifood({ marketplaceData }) {
+export default function Pedidos_Ifood({ marketplaceData }) {
   return (
     <div className="page-stack">
       <section className="page-grid page-grid-2-1">

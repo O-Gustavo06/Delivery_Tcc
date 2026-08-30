@@ -20,6 +20,7 @@ class Empresa extends Model
         'nm_empresa',
         'cnpj',
         'chave_pix',
+        'fl_aberto',
         'config_taxas_km',
     ];
 
@@ -27,6 +28,7 @@ class Empresa extends Model
     {
         return [
             'config_taxas_km' => 'array',
+            'fl_aberto' => 'boolean',
         ];
     }
 
@@ -48,5 +50,10 @@ class Empresa extends Model
     public function pedidos()
     {
         return $this->hasMany(Pedido::class, 'id_empresa', 'id_empresa');
+    }
+
+    public function whatsappInstance()
+    {
+        return $this->hasOne(WhatsappInstance::class, 'id_empresa', 'id_empresa');
     }
 }

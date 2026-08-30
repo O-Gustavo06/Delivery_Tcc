@@ -100,6 +100,31 @@ class MotoboyFlowTest extends TestCase
         )->assertOk()->assertJsonPath('status_entrega', 'ENTREGUE');
     }
 
+    /**
+     * Regressao: concluir sem mandar a chave "codigo_confirmacao" (nem null, ausente mesmo)
+     * num pedido que EXIGE codigo derrubava a API com erro 500 (undefined array key), em vez
+     * de devolver 422 igual a quando manda um codigo errado.
+     */
+    public function test_concluir_entrega_de_canal_externo_sem_enviar_codigo_retorna_422_sem_quebrar(): void
+    {
+        $headers = $this->adminHeaders();
+        $entregador = $this->criarEntregador();
+        $tokenEntregador = $entregador->usuario->createToken('teste')->plainTextToken;
+
+        $pedido = $this->criarPedidoDelivery($headers, [
+            'channel' => '99food',
+            'customer_phone' => '11999997777',
+        ]);
+
+        $this->getJson("/api/motoboy/pedidos/scan/{$pedido['codigo_qr']}", ['Authorization' => "Bearer $tokenEntregador"]);
+        $entregaId = \App\Models\Entrega::where('id_pedido', $pedido['id'])->value('id_entrega');
+
+        $this->patchJson("/api/motoboy/entregas/{$entregaId}/iniciar", [], ['Authorization' => "Bearer $tokenEntregador"]);
+
+        $this->patchJson("/api/motoboy/entregas/{$entregaId}/concluir", [], ['Authorization' => "Bearer $tokenEntregador"])
+            ->assertStatus(422);
+    }
+
     public function test_pedido_de_loja_conclui_sem_precisar_de_codigo(): void
     {
         $headers = $this->adminHeaders();
@@ -137,6 +162,11 @@ class MotoboyFlowTest extends TestCase
         $this->patchJson("/api/motoboy/entregas/{$entregaId}/concluir", [], ['Authorization' => "Bearer $tokenEntregador"]);
 
         $this->assertDatabaseHas('pedido', ['id_pedido' => $pedido['id'], 'status' => 'FINALIZADO']);
+
+        // O motoboy concluindo a entrega tambem precisa aprovar o pagamento (mesma regra do
+        // AdminOrderController::updateStatus) - senao o pedido some da lista de "pagamentos
+        // pendentes" mas o pagamento em si nunca conta como receita no financeiro.
+        $this->assertDatabaseHas('pagamento', ['id_pedido' => $pedido['id'], 'status' => 'APROVADO']);
     }
 
     public function test_outro_entregador_nao_consegue_mexer_em_entrega_que_nao_e_dele(): void

@@ -5,8 +5,10 @@ namespace Tests\Concerns;
 use App\Models\Categoria;
 use App\Models\Empresa;
 use App\Models\Entregador;
+use App\Models\Ingrediente;
 use App\Models\Mesa;
 use App\Models\Produto;
+use App\Models\ProdutoIngrediente;
 use App\Models\User;
 use Illuminate\Support\Str;
 
@@ -77,6 +79,27 @@ trait CriaDadosBasicos
             'status_ocupacao' => 'LIVRE',
             'qr_code_token' => 'mesa-teste-' . Str::random(8),
             'capacidade' => 4,
+        ], $overrides));
+    }
+
+    protected function criarIngrediente(Empresa $empresa, array $overrides = []): Ingrediente
+    {
+        return Ingrediente::create(array_merge([
+            'id_empresa' => $empresa->id_empresa,
+            'nm_ingrediente' => 'Ingrediente Teste ' . Str::random(6),
+            'unidade' => 'kg',
+            'fl_ativo' => true,
+            'qtd_atual' => 0,
+        ], $overrides));
+    }
+
+    protected function criarReceita(Produto $produto, Ingrediente $ingrediente, array $overrides = []): ProdutoIngrediente
+    {
+        return ProdutoIngrediente::create(array_merge([
+            'id_produto' => $produto->id_produto,
+            'id_ingrediente' => $ingrediente->id_ingrediente,
+            'qtde' => 1,
+            'unidade' => 'kg',
         ], $overrides));
     }
 }

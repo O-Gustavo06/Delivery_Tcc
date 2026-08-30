@@ -41,5 +41,22 @@ return [
     'empresa' => [
         'lat' => env('EMPRESA_LAT'), 'lng' => env('EMPRESA_LNG')
     ],
+    'vapid' => [
+        'public_key' => env('VAPID_PUBLIC_KEY'),
+        'private_key' => env('VAPID_PRIVATE_KEY'),
+        'subject' => env('VAPID_SUBJECT', 'mailto:contato@chefshub.local'),
+    ],
+
+    'evolution' => [
+        // URL base da Evolution API (camada de comunicacao com o WhatsApp). Dentro do
+        // Docker, aponta pro servico "evolution-api" do docker-compose; fora do Docker,
+        // pro container publicado em localhost:8080.
+        'base_url' => env('EVOLUTION_API_URL', 'http://localhost:8080'),
+        // Precisa bater com AUTHENTICATION_API_KEY configurado no container da Evolution API.
+        'api_key' => env('EVOLUTION_API_KEY'),
+        // URL que a Evolution API vai chamar quando um evento acontecer (mensagem recebida,
+        // atualizacao de conexao etc). Por padrao deriva do APP_URL do proprio backend.
+        'webhook_url' => env('EVOLUTION_WEBHOOK_URL'),
+    ],
 
 ];

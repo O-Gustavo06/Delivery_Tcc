@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
 
 const statusMap = {
@@ -22,7 +22,7 @@ function ComandasPendentes({ comandas, onConfirmar }) {
   }
 
   return (
-    <article className="card section-card fade-in" style={{ borderColor: 'rgba(242, 181, 59, 0.4)', '--i': 4 }}>
+    <article className="card section-card fade-in" style={{ borderColor: 'rgba(180, 83, 9, 0.4)', '--i': 4 }}>
       <div className="section-head">
         <div>
           <h2>Comandas aguardando pagamento</h2>
@@ -62,14 +62,32 @@ function ComandasPendentes({ comandas, onConfirmar }) {
   )
 }
 
+const emptyFaixa = () => ({ ate_km: '', valor: '' })
+
 function ConfiguracaoPix({ empresa, onSalvar }) {
   const [chavePix, setChavePix] = useState('')
   const [salvando, setSalvando] = useState(false)
   const [status, setStatus] = useState('')
+  const [alternandoAberto, setAlternandoAberto] = useState(false)
+
+  const [taxaPadrao, setTaxaPadrao] = useState('8')
+  const [faixas, setFaixas] = useState([])
+  const [salvandoTaxas, setSalvandoTaxas] = useState(false)
+  const [statusTaxas, setStatusTaxas] = useState('')
 
   useEffect(() => {
     setChavePix(empresa?.chave_pix || '')
   }, [empresa?.chave_pix])
+
+  useEffect(() => {
+    setTaxaPadrao(String(empresa?.config_taxas_km?.taxa_padrao ?? '8'))
+    setFaixas(
+      (empresa?.config_taxas_km?.faixas || []).map((faixa) => ({
+        ate_km: String(faixa.ate_km),
+        valor: String(faixa.valor),
+      })),
+    )
+  }, [empresa?.config_taxas_km])
 
   const handleSalvar = async () => {
     setSalvando(true)
@@ -79,9 +97,62 @@ function ConfiguracaoPix({ empresa, onSalvar }) {
     setSalvando(false)
   }
 
+  const updateFaixa = (index, field, value) => {
+    setFaixas((prev) => prev.map((faixa, i) => (i === index ? { ...faixa, [field]: value } : faixa)))
+  }
+
+  const addFaixa = () => setFaixas((prev) => [...prev, emptyFaixa()])
+  const removeFaixa = (index) => setFaixas((prev) => prev.filter((_, i) => i !== index))
+
+  const handleSalvarTaxas = async () => {
+    setStatusTaxas('')
+
+    const faixasValidas = faixas.filter((faixa) => faixa.ate_km !== '' && faixa.valor !== '')
+    if (faixasValidas.length !== faixas.length) {
+      setStatusTaxas('Preencha "até km" e "valor" em todas as faixas, ou remova as incompletas.')
+      return
+    }
+
+    setSalvandoTaxas(true)
+    const result = await onSalvar({
+      config_taxas_km: {
+        taxa_padrao: Number(taxaPadrao) || 0,
+        faixas: faixasValidas
+          .map((faixa) => ({ ate_km: Number(faixa.ate_km), valor: Number(faixa.valor) }))
+          .sort((a, b) => a.ate_km - b.ate_km),
+      },
+    })
+    setStatusTaxas(result.ok ? 'Taxas de entrega salvas.' : result.message)
+    setSalvandoTaxas(false)
+  }
+
+  const handleAlternarAberto = async () => {
+    setAlternandoAberto(true)
+    await onSalvar({ fl_aberto: !empresa?.aberto })
+    setAlternandoAberto(false)
+  }
+
+  const aberto = empresa?.aberto !== false
+
   return (
     <article className="card section-card fade-in" style={{ '--i': 5 }}>
       <div className="section-head">
+        <div>
+          <h2>Cardápio online</h2>
+          <p>Controla se a loja está recebendo pedidos pelo cardápio público agora.</p>
+        </div>
+        <button
+          type="button"
+          className={`badge ${aberto ? 'badge-green' : 'badge-red'}`}
+          style={{ cursor: 'pointer', border: 'none' }}
+          onClick={handleAlternarAberto}
+          disabled={alternandoAberto}
+        >
+          {alternandoAberto ? 'Salvando...' : aberto ? 'Aberto — clique pra fechar' : 'Fechado — clique pra abrir'}
+        </button>
+      </div>
+
+      <div className="section-head" style={{ borderTop: '1px solid var(--line)', paddingTop: 16, marginTop: 4 }}>
         <div>
           <h2>Chave Pix da empresa</h2>
           <p>Mostrada pro cliente quando ele fecha a mesa escolhendo Pix.</p>
@@ -101,6 +172,63 @@ function ConfiguracaoPix({ empresa, onSalvar }) {
           {salvando ? 'Salvando...' : 'Salvar'}
         </button>
         {status && <small style={{ color: 'var(--muted)' }}>{status}</small>}
+      </div>
+
+      <div className="section-head" style={{ borderTop: '1px solid var(--line)', paddingTop: 16, marginTop: 4 }}>
+        <div>
+          <h2>Taxa de entrega por distância</h2>
+          <p>
+            Defina faixas de km e o valor de cada uma. Exige <code>EMPRESA_LAT</code>/<code>EMPRESA_LNG</code>{' '}
+            configurados no servidor — sem isso (ou sem faixa cadastrada), todo pedido usa a taxa padrão.
+          </p>
+        </div>
+      </div>
+
+      <div className="filter-group" style={{ maxWidth: 220 }}>
+        <label>Taxa padrão (sem faixa / distância indisponível)</label>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={taxaPadrao}
+          onChange={(event) => setTaxaPadrao(event.target.value)}
+        />
+      </div>
+
+      <div style={{ display: 'grid', gap: 8 }}>
+        {faixas.map((faixa, index) => (
+          <div className="item-row" key={index} style={{ gridTemplateColumns: '1fr 1fr auto' }}>
+            <input
+              type="number"
+              min="0.1"
+              step="0.1"
+              placeholder="Até quantos km"
+              value={faixa.ate_km}
+              onChange={(event) => updateFaixa(index, 'ate_km', event.target.value)}
+            />
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Valor (R$)"
+              value={faixa.valor}
+              onChange={(event) => updateFaixa(index, 'valor', event.target.value)}
+            />
+            <button className="item-remove" type="button" onClick={() => removeFaixa(index)}>
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+      <button className="btn btn-light" type="button" style={{ marginTop: 8, justifySelf: 'start' }} onClick={addFaixa}>
+        + Adicionar faixa
+      </button>
+
+      <div className="filter-actions" style={{ justifyContent: 'flex-start', gap: 10, alignItems: 'center', marginTop: 8 }}>
+        <button className="btn btn-primary" type="button" onClick={handleSalvarTaxas} disabled={salvandoTaxas}>
+          {salvandoTaxas ? 'Salvando...' : 'Salvar taxas'}
+        </button>
+        {statusTaxas && <small style={{ color: 'var(--muted)' }}>{statusTaxas}</small>}
       </div>
     </article>
   )
@@ -153,12 +281,13 @@ function ComandaBlock({ comanda }) {
   )
 }
 
-function MesaDetalheModal({ mesaId, numero, onClose, onFetch }) {
+function MesaDetalheModal({ mesaId, numero, onClose, onFetch, onLiberar }) {
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState('')
   const [detalhe, setDetalhe] = useState(null)
+  const [liberando, setLiberando] = useState(false)
 
-  useEffect(() => {
+  const carregar = () => {
     let cancelado = false
     setCarregando(true)
     onFetch(mesaId).then((result) => {
@@ -173,7 +302,20 @@ function MesaDetalheModal({ mesaId, numero, onClose, onFetch }) {
     return () => {
       cancelado = true
     }
-  }, [mesaId, onFetch])
+  }
+
+  useEffect(carregar, [mesaId, onFetch])
+
+  const handleLiberar = async () => {
+    setLiberando(true)
+    const result = await onLiberar(mesaId)
+    setLiberando(false)
+    if (result.ok) {
+      carregar()
+    } else {
+      setErro(result.message)
+    }
+  }
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -190,6 +332,12 @@ function MesaDetalheModal({ mesaId, numero, onClose, onFetch }) {
 
         {carregando && <p style={{ color: 'var(--muted)' }}>Carregando...</p>}
         {erro && <div className="notice notice-danger">{erro}</div>}
+
+        {detalhe && onLiberar && detalhe.mesa.status !== 'LIVRE' && (
+          <button className="btn btn-light" type="button" onClick={handleLiberar} disabled={liberando}>
+            {liberando ? 'Liberando...' : 'Liberar mesa'}
+          </button>
+        )}
 
         {detalhe && (
           <div style={{ display: 'grid', gap: 20 }}>
@@ -260,6 +408,134 @@ function QrCodesMesas({ areas }) {
   )
 }
 
+function FilaEspera({ waitingList, onAdicionar, onRemover }) {
+  const [nome, setNome] = useState('')
+  const [pessoas, setPessoas] = useState('2')
+  const [adicionando, setAdicionando] = useState(false)
+  const [removendoId, setRemovendoId] = useState(null)
+  const [erro, setErro] = useState('')
+
+  const handleAdicionar = async (event) => {
+    event.preventDefault()
+    setErro('')
+
+    if (!nome.trim() || !pessoas || Number(pessoas) < 1) {
+      setErro('Informe o nome e o numero de pessoas.')
+      return
+    }
+
+    setAdicionando(true)
+    const result = await onAdicionar({ nm_cliente: nome.trim(), nr_pessoas: Number(pessoas) })
+    setAdicionando(false)
+
+    if (!result.ok) {
+      setErro(result.message)
+      return
+    }
+
+    setNome('')
+    setPessoas('2')
+  }
+
+  const handleRemover = async (id) => {
+    setRemovendoId(id)
+    await onRemover(id)
+    setRemovendoId(null)
+  }
+
+  return (
+    <article className="card section-card fade-in" style={{ '--i': 8 }}>
+      <div className="section-head">
+        <div>
+          <h2>Fila de espera</h2>
+          <p>Clientes aguardando liberacao de mesa.</p>
+        </div>
+      </div>
+
+      {onAdicionar && (
+        <form onSubmit={handleAdicionar} className="item-row" style={{ gridTemplateColumns: '1fr 100px auto', marginBottom: 12 }}>
+          <input placeholder="Nome do cliente" value={nome} onChange={(event) => setNome(event.target.value)} />
+          <input
+            type="number"
+            min="1"
+            placeholder="Pessoas"
+            value={pessoas}
+            onChange={(event) => setPessoas(event.target.value)}
+          />
+          <button className="btn btn-primary" type="submit" disabled={adicionando}>
+            {adicionando ? 'Adicionando...' : 'Adicionar'}
+          </button>
+        </form>
+      )}
+      {erro && <small style={{ color: 'var(--danger)' }}>{erro}</small>}
+
+      <div className="data-table">
+        {waitingList.length === 0 && (
+          <p style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>Ninguem na fila agora.</p>
+        )}
+        {waitingList.map((entry) => (
+          <div className="data-row" key={entry.id} style={{ gridTemplateColumns: '1fr 0.5fr 0.5fr auto' }}>
+            <strong>{entry.name}</strong>
+            <span>{entry.size} pessoas</span>
+            <span>{entry.eta}</span>
+            {onRemover && (
+              <button
+                className="btn btn-light"
+                type="button"
+                onClick={() => handleRemover(entry.id)}
+                disabled={removendoId === entry.id}
+              >
+                {removendoId === entry.id ? '...' : 'Chamar / remover'}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </article>
+  )
+}
+
+function ListaModal({ titulo, subtitulo, colunas, linhas, textoVazio, onClose }) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-panel" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <div>
+            <h2>{titulo}</h2>
+            <p>{subtitulo}</p>
+          </div>
+          <button className="btn btn-light" type="button" onClick={onClose}>
+            Fechar
+          </button>
+        </div>
+
+        {linhas.length === 0 ? (
+          <p style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>{textoVazio}</p>
+        ) : (
+          <div className="data-table">
+            <div className="data-row row-head" style={{ gridTemplateColumns: colunas.map((c) => c.largura || '1fr').join(' ') }}>
+              {colunas.map((coluna) => (
+                <span key={coluna.label}>{coluna.label}</span>
+              ))}
+            </div>
+            {linhas.map((linha, index) => (
+              <div
+                className="data-row"
+                key={linha.id ?? index}
+                style={{ gridTemplateColumns: colunas.map((c) => c.largura || '1fr').join(' ') }}
+              >
+                {colunas.map((coluna) => (
+                  <span key={coluna.label}>{coluna.render(linha)}</span>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function Mesas({
   tablesData,
   comandasPendentes = [],
@@ -267,16 +543,45 @@ export default function Mesas({
   empresa,
   onUpdateEmpresa,
   onFetchMesaDetalhe,
+  onLiberarMesa,
+  onAdicionarFilaEspera,
+  onRemoverFilaEspera,
 }) {
   const [mesaAberta, setMesaAberta] = useState(null)
+  const [listaAberta, setListaAberta] = useState(null)
+
+  const todasAsMesas = useMemo(() => tablesData.areas.flatMap((area) => area.tables), [tablesData.areas])
+  const mesasOcupadas = useMemo(() => todasAsMesas.filter((mesa) => mesa.status === 'occupied'), [todasAsMesas])
+  const mesasReservadas = useMemo(() => todasAsMesas.filter((mesa) => mesa.status === 'reserved'), [todasAsMesas])
 
   return (
     <>
       <section className="cards no-print">
         <div className="card metric fade-in" style={{ '--i': 0 }}><div><span>Total de mesas</span><strong>{tablesData.summary.total}</strong></div><div className="metric-icon badge-blue">TT</div></div>
-        <div className="card metric fade-in" style={{ '--i': 1 }}><div><span>Ocupadas</span><strong>{tablesData.summary.occupied}</strong></div><div className="metric-icon badge-orange">OC</div></div>
-        <div className="card metric fade-in" style={{ '--i': 2 }}><div><span>Reservadas</span><strong>{tablesData.summary.reserved}</strong></div><div className="metric-icon badge-lime">RS</div></div>
-        <div className="card metric fade-in" style={{ '--i': 3 }}><div><span>Fila de espera</span><strong>{tablesData.summary.waiting}</strong></div><div className="metric-icon badge-sun">FL</div></div>
+        <button
+          type="button"
+          className="card metric fade-in"
+          style={{ '--i': 1, textAlign: 'left', cursor: 'pointer', font: 'inherit', width: '100%' }}
+          onClick={() => setListaAberta('ocupadas')}
+        >
+          <div><span>Ocupadas</span><strong>{tablesData.summary.occupied}</strong></div><div className="metric-icon badge-orange">OC</div>
+        </button>
+        <button
+          type="button"
+          className="card metric fade-in"
+          style={{ '--i': 2, textAlign: 'left', cursor: 'pointer', font: 'inherit', width: '100%' }}
+          onClick={() => setListaAberta('reservadas')}
+        >
+          <div><span>Reservadas</span><strong>{tablesData.summary.reserved}</strong></div><div className="metric-icon badge-lime">RS</div>
+        </button>
+        <button
+          type="button"
+          className="card metric fade-in"
+          style={{ '--i': 3, textAlign: 'left', cursor: 'pointer', font: 'inherit', width: '100%' }}
+          onClick={() => setListaAberta('fila')}
+        >
+          <div><span>Fila de espera</span><strong>{tablesData.summary.waiting}</strong></div><div className="metric-icon badge-sun">FL</div>
+        </button>
       </section>
 
       <div className="no-print" style={{ display: 'grid', gap: 20 }}>
@@ -319,23 +624,11 @@ export default function Mesas({
           ))}
         </div>
 
-        <article className="card section-card fade-in" style={{ '--i': tablesData.areas.length }}>
-          <div className="section-head">
-            <div>
-              <h2>Fila de espera</h2>
-              <p>Clientes aguardando liberacao de mesa.</p>
-            </div>
-          </div>
-          <div className="data-table">
-            {tablesData.waitingList.map((entry) => (
-              <div className="data-row" key={entry.id} style={{ gridTemplateColumns: '1fr 0.5fr 0.5fr' }}>
-                <strong>{entry.name}</strong>
-                <span>{entry.size} pessoas</span>
-                <span>{entry.eta}</span>
-              </div>
-            ))}
-          </div>
-        </article>
+        <FilaEspera
+          waitingList={tablesData.waitingList}
+          onAdicionar={onAdicionarFilaEspera}
+          onRemover={onRemoverFilaEspera}
+        />
       </section>
 
       {mesaAberta && (
@@ -344,6 +637,52 @@ export default function Mesas({
           numero={mesaAberta.number}
           onClose={() => setMesaAberta(null)}
           onFetch={onFetchMesaDetalhe}
+          onLiberar={onLiberarMesa}
+        />
+      )}
+
+      {listaAberta === 'ocupadas' && (
+        <ListaModal
+          titulo="Mesas ocupadas"
+          subtitulo={`${mesasOcupadas.length} mesa(s) com consumo em aberto agora.`}
+          textoVazio="Nenhuma mesa ocupada no momento."
+          colunas={[
+            { label: 'Mesa', largura: '0.6fr', render: (mesa) => `Mesa ${mesa.number}` },
+            { label: 'Cliente', largura: '1.2fr', render: (mesa) => (mesa.waiter && mesa.waiter !== '-' ? mesa.waiter : 'Nao identificado') },
+            { label: 'Consumo', largura: '0.8fr', render: (mesa) => (mesa.ticket ? `R$ ${mesa.ticket.toFixed(2)}` : 'Sem consumo') },
+          ]}
+          linhas={mesasOcupadas}
+          onClose={() => setListaAberta(null)}
+        />
+      )}
+
+      {listaAberta === 'reservadas' && (
+        <ListaModal
+          titulo="Mesas reservadas"
+          subtitulo={`${mesasReservadas.length} mesa(s) reservada(s) agora.`}
+          textoVazio="Nenhuma mesa reservada no momento."
+          colunas={[
+            { label: 'Mesa', largura: '0.6fr', render: (mesa) => `Mesa ${mesa.number}` },
+            { label: 'Cliente', largura: '1.2fr', render: (mesa) => (mesa.waiter && mesa.waiter !== '-' ? mesa.waiter : 'Nao identificado') },
+            { label: 'Lugares', largura: '0.6fr', render: (mesa) => `${mesa.seats} lugares` },
+          ]}
+          linhas={mesasReservadas}
+          onClose={() => setListaAberta(null)}
+        />
+      )}
+
+      {listaAberta === 'fila' && (
+        <ListaModal
+          titulo="Fila de espera"
+          subtitulo={`${tablesData.waitingList.length} grupo(s) aguardando mesa.`}
+          textoVazio="Ninguem na fila agora."
+          colunas={[
+            { label: 'Nome', largura: '1.2fr', render: (item) => item.name },
+            { label: 'Pessoas', largura: '0.6fr', render: (item) => `${item.size} pessoas` },
+            { label: 'Esperando', largura: '0.7fr', render: (item) => item.eta },
+          ]}
+          linhas={tablesData.waitingList}
+          onClose={() => setListaAberta(null)}
         />
       )}
     </>

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'motoboy-shell-v1'
+const CACHE_NAME = 'motoboy-shell-v2'
 const APP_SHELL = ['/login', '/favicon.png', '/manifest.webmanifest']
 
 self.addEventListener('install', (event) => {
@@ -22,17 +22,15 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return
   if (request.url.includes('/api/')) return
 
+  // Network-first, cache so como fallback offline - cache-first prendia quem ja tinha
+  // instalado o app numa versao antiga pra sempre, sem nunca buscar atualizacao de novo.
   event.respondWith(
-    caches.match(request).then(
-      (cached) =>
-        cached ||
-        fetch(request)
-          .then((response) => {
-            const clone = response.clone()
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone))
-            return response
-          })
-          .catch(() => cached),
-    ),
+    fetch(request)
+      .then((response) => {
+        const clone = response.clone()
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, clone))
+        return response
+      })
+      .catch(() => caches.match(request)),
   )
 })

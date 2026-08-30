@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Motoboy;
 
 use App\Http\Controllers\Controller;
 use App\Models\Entrega;
+use App\Services\PushNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -26,6 +27,10 @@ class EntregaController extends Controller
             // O motoboy iniciar a entrega É o pedido saindo pra entrega - o admin/cozinha
             // nao deveria precisar clicar em nada pra essa mudanca aparecer la tambem.
             $entrega->pedido?->update(['status' => 'ENTREGANDO']);
+
+            if ($entrega->pedido?->canal_origem === 'ONLINE') {
+                app(PushNotificationService::class)->notificarMudancaDeStatus($entrega->pedido);
+            }
         });
 
         return response()->json(['message' => 'Entrega iniciada.', 'status_entrega' => $entrega->status_entrega]);
@@ -44,7 +49,7 @@ class EntregaController extends Controller
         ]);
 
         // Se o pedido veio de plataforma externa e exige código, valida antes de concluir.
-        if ($entrega->codigo_confirmacao_entrega && $data['codigo_confirmacao'] !== $entrega->codigo_confirmacao_entrega) {
+        if ($entrega->codigo_confirmacao_entrega && ($data['codigo_confirmacao'] ?? null) !== $entrega->codigo_confirmacao_entrega) {
             return response()->json(['message' => 'Código de confirmação inválido.'], 422);
         }
 
@@ -55,6 +60,17 @@ class EntregaController extends Controller
             ]);
 
             $entrega->pedido?->update(['status' => 'FINALIZADO', 'dt_conclusao' => now()]);
+
+            // Mesma regra do AdminOrderController::updateStatus() - pedido finalizado vira
+            // pagamento aprovado, senao nunca contaria como receita no financeiro. Faltava
+            // aqui porque o motoboy conclui a entrega direto, sem passar por aquele metodo.
+            if ($entrega->pedido?->pagamento?->status === 'PENDENTE') {
+                $entrega->pedido->pagamento->update(['status' => 'APROVADO']);
+            }
+
+            if ($entrega->pedido?->canal_origem === 'ONLINE') {
+                app(PushNotificationService::class)->notificarMudancaDeStatus($entrega->pedido);
+            }
 
             $item = $entrega->rotaEntregaItem;
             if ($item) {

@@ -1,9 +1,10 @@
 import React, { useState } from 'react'
 import EnderecoPorCep from '../pages_delivery/EnderecoPorCep.jsx'
+import { resolveApiBase } from '../utils/apiBase'
 
-const API_BASE = import.meta.env.VITE_API_BASE || `http://${window.location.hostname}:8000/api`
+const API_BASE = resolveApiBase()
 
-const emptyItem = () => ({ name: '', qty: '1', price: '' })
+const emptyItem = () => ({ name: '', qty: '1', price: '', note: '' })
 
 export default function NovoPedidoModal({ onCreate, onClose }) {
   const [type, setType] = useState('mesa')
@@ -18,6 +19,7 @@ export default function NovoPedidoModal({ onCreate, onClose }) {
   const [channel, setChannel] = useState('loja')
   const [paymentMethod, setPaymentMethod] = useState('pix')
   const [changeFor, setChangeFor] = useState('')
+  const [note, setNote] = useState('')
   const [items, setItems] = useState([emptyItem()])
   const [error, setError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
@@ -80,6 +82,7 @@ export default function NovoPedidoModal({ onCreate, onClose }) {
         name: item.name.trim(),
         qty: Number(item.qty),
         price: Number(item.price),
+        ...(item.note.trim() ? { note: item.note.trim() } : {}),
       })),
     }
 
@@ -100,6 +103,9 @@ export default function NovoPedidoModal({ onCreate, onClose }) {
     payload.payment_method = paymentMethod
     if (paymentMethod === 'dinheiro' && changeFor) {
       payload.change_for = Number(changeFor)
+    }
+    if (note.trim()) {
+      payload.note = note.trim()
     }
 
     setIsSaving(true)
@@ -224,39 +230,59 @@ export default function NovoPedidoModal({ onCreate, onClose }) {
             )}
           </div>
 
+          <div className="filter-group">
+            <label>Observações do pedido (opcional)</label>
+            <textarea
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Ex: campainha não funciona, embalar para viagem, troco combinado na porta..."
+              rows={2}
+              style={{ resize: 'vertical', minHeight: 44 }}
+            />
+          </div>
+
           <div>
             <label style={{ fontSize: 12.5, color: 'var(--muted)' }}>Itens</label>
             <div style={{ display: 'grid', gap: 8, marginTop: 6 }}>
               {items.map((item, index) => (
-                <div className="item-row" key={index}>
-                  <input
-                    placeholder="Item"
-                    value={item.name}
-                    onChange={(event) => updateItem(index, 'name', event.target.value)}
-                  />
-                  <input
-                    type="number"
-                    min="1"
-                    placeholder="Qtd"
-                    value={item.qty}
-                    onChange={(event) => updateItem(index, 'qty', event.target.value)}
-                  />
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="Preco"
-                    value={item.price}
-                    onChange={(event) => updateItem(index, 'price', event.target.value)}
-                  />
-                  <button
-                    className="item-remove"
-                    type="button"
-                    onClick={() => removeItem(index)}
-                    disabled={items.length === 1}
-                  >
-                    ×
-                  </button>
+                <div key={index} style={{ display: 'grid', gap: 4 }}>
+                  <div className="item-row">
+                    <input
+                      placeholder="Item"
+                      value={item.name}
+                      onChange={(event) => updateItem(index, 'name', event.target.value)}
+                    />
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="Qtd"
+                      value={item.qty}
+                      onChange={(event) => updateItem(index, 'qty', event.target.value)}
+                    />
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="Preco"
+                      value={item.price}
+                      onChange={(event) => updateItem(index, 'price', event.target.value)}
+                    />
+                    <button
+                      className="item-remove"
+                      type="button"
+                      onClick={() => removeItem(index)}
+                      disabled={items.length === 1}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="filter-group">
+                    <input
+                      placeholder="Obs do item (ex: retirar cebola)"
+                      value={item.note}
+                      onChange={(event) => updateItem(index, 'note', event.target.value)}
+                    />
+                  </div>
                 </div>
               ))}
             </div>

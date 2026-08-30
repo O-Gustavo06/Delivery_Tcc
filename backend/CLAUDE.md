@@ -2,6 +2,14 @@
 
 Contexto do projeto para o Claude Code. Leia isto antes de mexer em qualquer código.
 
+## Estado atual (atualizar isso a cada sessão importante)
+
+**Pronto e funcionando**: mesa, cardápio delivery, motoboy (rota inteligente + baixa/reposição automática de estoque), painel admin, dashboard financeiro "Compras e Lucros", horário de Brasília em tudo, Docker configurado (ver `docker-compose.yml` na raiz).
+
+**Pendente**: chave real do Google Maps (`GOOGLE_MAPS_API_KEY`/`EMPRESA_LAT`/`EMPRESA_LNG`) — sem ela, `RotaInteligenteService` usa o fallback local (nearest neighbor).
+
+**iFood/99Food**: sem integração real (fora do escopo). O canal "iFood" só é simulado manualmente pelo admin (Novo Pedido → Delivery → canal iFood), pra gerar `codigo_confirmacao_entrega` e demonstrar esse fluxo pro motoboy.
+
 ## Stack
 
 - **Framework**: Laravel 12, PHP ^8.2
@@ -34,6 +42,9 @@ Este projeto **não usa os padrões default do Laravel**. Siga exatamente o que 
 | `rota_entrega` | Agrupamento de entregas por proximidade (rota inteligente). 1 entregador : N rotas |
 | `rota_entrega_item` | N:N entre `rota_entrega` e `entrega`, com `ordem_sequencia` e `dt_entregue` |
 | `fechamento_caixa_entregador` | Prestação de contas diária por entregador (taxas a receber, dinheiro recebido) |
+| `ingrediente` | Matéria-prima/estoque. Tem `qtd_atual` (saldo mantido de forma transacional a cada `estoque_movimento`, não derivado por soma) |
+| `compra` / `compra_item` | Compra de ingredientes. `AdminEstoqueController::registrarCompra()` cria `estoque_movimento` ENTRADA automaticamente na mesma transação |
+| `produto_ingrediente` | Receita/BOM do produto. `AdminOrderController::baixarEstoquePorPedido()` desconta na transição PENDENTE→CONFIRMADO; cancelar um pedido já confirmado repõe (`reporEstoquePorPedido()`) |
 
 ## Módulo do Motoboy — o que estamos construindo
 
@@ -45,10 +56,21 @@ App/PWA separado para os entregadores fixos do estabelecimento. Fluxo: motoboy b
 
 **Endpoints já planejados/implementados** (ver `routes/api.php`, grupo `motoboy` com middleware `auth.api` + `role:entregador`):
 - `GET /motoboy/pedidos/scan/{codigoQr}` — bipar QR Code
-- `GET /motoboy/rotas/ativa`, `PATCH /motoboy/rotas/{id}/reordenar`
+- `GET /motoboy/rotas/ativa` — só devolve paradas ainda em andamento (entregue/cancelada saem da lista, mesmo com a rota ainda ativa), `PATCH /motoboy/rotas/{id}/reordenar`
 - `PATCH /motoboy/entregas/{id}/iniciar`, `PATCH /motoboy/entregas/{id}/concluir`
 - `GET /motoboy/entregas/historico?periodo=dia|geral`
 - `GET /admin/motoboys/fechamento`, `POST /admin/motoboys/{id}/fechamento/pagar`
+
+**Estoque/financeiro** (`AdminEstoqueController`, mesmo grupo `admin` + `role:admin`):
+- `GET|POST /admin/ingredientes`, `POST /admin/estoque/movimento` (saída/ajuste avulso)
+- `GET|POST /admin/compras`, `GET /admin/compras/{id}`
+- `GET /admin/financeiro/resumo?meses=6` — receita (de `pagamento`) − custo (de `compra`) = lucro, por mês
+
+**Cardápio** (`AdminProdutoController`, mesmo grupo `admin` + `role:admin`):
+- `GET|POST /admin/categorias`
+- `GET|POST /admin/produtos`, `PATCH /admin/produtos/{id}` (editar, ativar/desativar)
+
+**Motoboy — HTTPS local**: o dev server do motoboy (`motoboy/vite.config.js`) roda em HTTPS com certificado autoassinado (`.tools/dev-cert.pem`/`dev-key.pem`, gerados via `mkcert`) porque o navegador só libera câmera (`getUserMedia`, usado no scanner de QR) fora de `localhost` se a conexão for segura — importante pra testar em celular pela rede local. Sem isso, o scanner cai no fallback de digitar o código manualmente.
 
 **Configuração necessária** em `.env` / `config/services.php`:
 ```
@@ -59,6 +81,20 @@ EMPRESA_LNG=
 
 ## Como rodar localmente
 
+Jeito principal (da raiz do projeto, não daqui de `backend/`):
+```bash
+npm run dev
+```
+Sobe Docker (`docker compose up -d` — banco + backend) e `frontend`+`motoboy` juntos. Senhas em `.env`/`.env.docker`/`.env.testing.docker` (gitignored, recriar a partir dos `.example` em máquina nova — os valores reais de `DB_PASSWORD` e `APP_KEY` precisam bater com o que já está rodando, não é só copiar o example).
+
+Comandos dentro do container (equivalentes ao `php artisan ...` local):
+```bash
+docker exec restaurante_app php artisan migrate:status
+docker exec restaurante_app php artisan test
+docker exec restaurante_app php artisan db:seed --class=AdminDemoDataSeeder --force
+```
+
+Sem Docker (fallback):
 ```bash
 composer install
 cp .env.example .env   # se ainda não existir
@@ -73,6 +109,10 @@ curl -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"...","password":"..."}'
 ```
+
+## Testes automatizados
+
+Ficam em `backend/tests/Feature` (PHPUnit puro, sem Pest). `backend/tests/Unit` existe só como pasta vazia (com `.gitkeep`) porque o `phpunit.xml` referencia as duas testsuites — sem essa pasta o `php artisan test` falha de cara com "Test directory not found", mesmo sem nenhum teste unitário de verdade no projeto.
 
 ## O que evitar
 

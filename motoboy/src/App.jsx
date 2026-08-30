@@ -31,6 +31,16 @@ export default function App() {
   const [scanError, setScanError] = useState('')
   const [actingEntregaId, setActingEntregaId] = useState(null)
   const [toast, setToast] = useState('')
+  const [theme, setTheme] = useState(() => window.localStorage.getItem('theme') || 'light')
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    window.localStorage.setItem('theme', theme)
+  }, [theme])
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
+  }, [])
 
   const refreshRota = useCallback(async () => {
     setRotaLoading(true)
@@ -190,9 +200,20 @@ export default function App() {
             <p>{subtitle}</p>
           </div>
         </div>
-        <button className="mobile-logout" type="button" onClick={handleLogout} aria-label="Sair" title="Sair">
-          <IconLogout />
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="mobile-logout"
+            type="button"
+            onClick={toggleTheme}
+            aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
+            title={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+          <button className="mobile-logout" type="button" onClick={handleLogout} aria-label="Sair" title="Sair">
+            <IconLogout />
+          </button>
+        </div>
       </header>
 
       {toast && (

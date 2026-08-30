@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Delivery;
 
 use App\Http\Controllers\Controller;
+use App\Models\Avaliacao;
 use App\Models\Cliente;
 use App\Models\Empresa;
 use App\Models\Entrega;
@@ -10,9 +11,11 @@ use App\Models\ItemPedido;
 use App\Models\Pagamento;
 use App\Models\Pedido;
 use App\Models\Produto;
+use App\Models\PushSubscription;
 use App\Models\User;
 use App\Http\Controllers\Api\Mesa\MesaSessionController;
 use App\Services\GeocodingService;
+use App\Services\TaxaEntregaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -59,9 +62,23 @@ class PedidoOnlineController extends Controller
             ->orderBy('nm_produto')
             ->get();
 
+        // Nota media real do restaurante, calculada a partir das avaliacoes de pedido de
+        // verdade (mesma tabela usada pra nota do entregador em /entrega) - nao mostra nada
+        // (sem "4,8" inventado) enquanto ninguem avaliou ainda.
+        $avaliacoes = Avaliacao::query()
+            ->join('pedido', 'pedido.id_pedido', '=', 'avaliacao.id_pedido')
+            ->where('pedido.id_empresa', $empresa->id_empresa)
+            ->selectRaw('AVG(avaliacao.nota) as media, COUNT(*) as total')
+            ->first();
+
         return response()->json([
             'empresa' => [
                 'nome' => $empresa->nm_empresa,
+                'aberto' => (bool) $empresa->fl_aberto,
+                'taxa_entrega_padrao' => (float) ($empresa->config_taxas_km['taxa_padrao'] ?? 8.0),
+                'nota_media' => $avaliacoes->total > 0 ? round((float) $avaliacoes->media, 1) : null,
+                'qtd_avaliacoes' => (int) $avaliacoes->total,
+                'vapid_public_key' => config('services.vapid.public_key'),
             ],
             'produtos' => $produtos->map(fn (Produto $produto) => [
                 'id' => $produto->id_produto,
@@ -84,21 +101,29 @@ class PedidoOnlineController extends Controller
         $data = $request->validate([
             'nome' => ['required', 'string', 'max:150'],
             'telefone' => ['required', 'string', 'max:20'],
-            'cep' => ['required', 'string', 'max:9'],
+            'tipo_entrega' => ['required', 'string', 'in:delivery,retirada'],
+            'cep' => ['required_if:tipo_entrega,delivery', 'nullable', 'string', 'max:9'],
             'rua' => ['nullable', 'string', 'max:150'],
             'cidade' => ['nullable', 'string', 'max:100'],
             'uf' => ['nullable', 'string', 'max:2'],
-            'endereco' => ['required', 'string', 'max:255'],
+            'endereco' => ['required_if:tipo_entrega,delivery', 'nullable', 'string', 'max:255'],
             'payment_method' => ['required', 'string', 'in:pix,cartao,dinheiro'],
             'change_for' => ['nullable', 'numeric', 'min:0'],
+            'note' => ['nullable', 'string', 'max:500'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.id_produto' => ['required', 'integer', 'exists:produto,id_produto'],
             'items.*.qty' => ['required', 'integer', 'min:1'],
         ]);
 
+        $isRetirada = $data['tipo_entrega'] === 'retirada';
+
         $empresa = Empresa::orderBy('id_empresa')->first();
         if (!$empresa) {
             return response()->json(['message' => 'Nenhum restaurante configurado.'], 422);
+        }
+
+        if (!$empresa->fl_aberto) {
+            return response()->json(['message' => 'O restaurante esta fechado no momento. Tente novamente mais tarde.'], 422);
         }
 
         $produtos = Produto::whereIn('id_produto', collect($data['items'])->pluck('id_produto'))
@@ -107,15 +132,17 @@ class PedidoOnlineController extends Controller
             ->get()
             ->keyBy('id_produto');
 
-        // Geocodifica fora da transacao - e uma chamada de rede, nao deve segurar lock no banco.
-        $coordenadas = app(GeocodingService::class)->coordenadasPorEndereco(
+        // Retirada no balcao nao tem endereco pra geocodificar - poupa a chamada de rede.
+        $coordenadas = $isRetirada ? [] : app(GeocodingService::class)->coordenadasPorEndereco(
             $data['rua'] ?? null,
             $data['cidade'] ?? null,
             $data['uf'] ?? null,
             $data['cep'],
         );
 
-        $pedido = DB::transaction(function () use ($data, $empresa, $produtos, $coordenadas) {
+        $taxaEntrega = $isRetirada ? 0 : app(TaxaEntregaService::class)->calcular($coordenadas['lat'] ?? null, $coordenadas['lng'] ?? null);
+
+        $pedido = DB::transaction(function () use ($data, $empresa, $produtos, $coordenadas, $isRetirada, $taxaEntrega) {
             $cliente = Cliente::with('usuario')->where('telefone', $data['telefone'])->first();
 
             if (!$cliente) {
@@ -145,23 +172,28 @@ class PedidoOnlineController extends Controller
             }
 
             // Numeracao propria do delivery, comecando do 1 - mesma regra do pedido criado
-            // pelo admin (AdminOrderController::store), pra nao duplicar numero entre os dois canais.
-            $nrPedidoDelivery = 1 + (int) DB::table('pedido')
-                ->where('tipo_pedido', 'DELIVERY')
-                ->lockForUpdate()
-                ->max('nr_pedido_delivery');
+            // pelo admin (AdminOrderController::store), pra nao duplicar numero entre os dois
+            // canais. Retirada no balcao nao entra nessa numeracao (so existe pra motoboy).
+            $nrPedidoDelivery = null;
+            if (!$isRetirada) {
+                $nrPedidoDelivery = 1 + (int) DB::table('pedido')
+                    ->where('tipo_pedido', 'DELIVERY')
+                    ->lockForUpdate()
+                    ->max('nr_pedido_delivery');
+            }
 
             $pedido = Pedido::create([
                 'id_empresa' => $empresa->id_empresa,
                 'id_cliente' => $cliente->id_cliente,
                 'codigo_qr' => (string) Str::uuid(),
-                'tipo_pedido' => 'DELIVERY',
+                'tipo_pedido' => $isRetirada ? 'BALCAO' : 'DELIVERY',
                 'nr_pedido_delivery' => $nrPedidoDelivery,
                 'canal_origem' => 'ONLINE',
                 'status' => 'PENDENTE',
                 'vl_total' => round($total, 2),
-                'vl_taxa_entrega' => 8,
-                'ds_observacao' => $data['endereco'],
+                'vl_taxa_entrega' => $taxaEntrega,
+                'ds_observacao' => $isRetirada ? null : $data['endereco'],
+                'ds_nota_pedido' => !empty($data['note']) ? mb_strtoupper($data['note']) : null,
             ]);
 
             foreach ($data['items'] as $item) {
@@ -191,19 +223,25 @@ class PedidoOnlineController extends Controller
                 'vl_final' => round($total, 2),
             ]);
 
-            Entrega::create([
-                'id_pedido' => $pedido->id_pedido,
-                'status_entrega' => 'AGUARDANDO',
-                'latitude_destino' => $coordenadas['lat'] ?? null,
-                'longitude_destino' => $coordenadas['lng'] ?? null,
-            ]);
+            // Retirada no balcao nao tem entrega/motoboy - so pedido delivery precisa desse
+            // registro (mesma regra do AdminOrderController::store pra pedido de balcao).
+            if (!$isRetirada) {
+                Entrega::create([
+                    'id_pedido' => $pedido->id_pedido,
+                    'status_entrega' => 'AGUARDANDO',
+                    'latitude_destino' => $coordenadas['lat'] ?? null,
+                    'longitude_destino' => $coordenadas['lng'] ?? null,
+                ]);
+            }
 
             return $pedido;
         });
 
         return response()->json([
             'codigo_qr' => $pedido->codigo_qr,
+            'number' => $pedido->id_pedido,
             'delivery_number' => $pedido->nr_pedido_delivery,
+            'tipo_entrega' => $isRetirada ? 'retirada' : 'delivery',
             'total' => (float) $pedido->vl_total,
             'status' => self::DB_TO_FRONT_STATUS[$pedido->status] ?? 'aguardando_confirmacao',
         ], 201);
@@ -232,7 +270,7 @@ class PedidoOnlineController extends Controller
      */
     public function status(string $codigoQr): JsonResponse
     {
-        $pedido = Pedido::with(['entrega.entregador.usuario'])
+        $pedido = Pedido::with(['entrega.entregador.usuario', 'avaliacao'])
             ->where('codigo_qr', $codigoQr)
             ->where('canal_origem', 'ONLINE')
             ->first();
@@ -242,11 +280,90 @@ class PedidoOnlineController extends Controller
         }
 
         return response()->json([
+            'number' => $pedido->id_pedido,
             'delivery_number' => $pedido->nr_pedido_delivery,
+            'tipo_entrega' => $pedido->tipo_pedido === 'BALCAO' ? 'retirada' : 'delivery',
             'status' => self::DB_TO_FRONT_STATUS[$pedido->status] ?? 'aguardando_confirmacao',
             'motivo_cancelamento' => $pedido->motivo_cancelamento,
             'total' => (float) $pedido->vl_total,
             'entregador_nome' => $pedido->entrega?->entregador?->usuario?->nm_usuario,
+            'avaliacao' => $pedido->avaliacao ? [
+                'nota' => $pedido->avaliacao->nota,
+                'comentario' => $pedido->avaliacao->ds_comentario,
+            ] : null,
         ]);
+    }
+
+    /**
+     * POST /pedir/status/{codigoQr}/avaliacao
+     * Cliente avalia o pedido (e, se houve entrega, o entregador junto - mesma nota, ver
+     * comentario no model Avaliacao). So pode avaliar pedido ja FINALIZADO, e so uma vez.
+     */
+    public function avaliar(Request $request, string $codigoQr): JsonResponse
+    {
+        $pedido = Pedido::with('entrega', 'avaliacao')
+            ->where('codigo_qr', $codigoQr)
+            ->where('canal_origem', 'ONLINE')
+            ->first();
+
+        if (!$pedido) {
+            return response()->json(['message' => 'Pedido nao encontrado.'], 404);
+        }
+
+        if ($pedido->status !== 'FINALIZADO') {
+            return response()->json(['message' => 'Esse pedido ainda nao foi finalizado.'], 422);
+        }
+
+        if ($pedido->avaliacao) {
+            return response()->json(['message' => 'Esse pedido ja foi avaliado.'], 422);
+        }
+
+        $data = $request->validate([
+            'nota' => ['required', 'integer', 'min:1', 'max:5'],
+            'comentario' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $avaliacao = Avaliacao::create([
+            'id_pedido' => $pedido->id_pedido,
+            'id_cliente' => $pedido->id_cliente,
+            'id_entregador' => $pedido->entrega?->id_entregador,
+            'nota' => $data['nota'],
+            'ds_comentario' => $data['comentario'] ?? null,
+        ]);
+
+        return response()->json([
+            'nota' => $avaliacao->nota,
+            'comentario' => $avaliacao->ds_comentario,
+        ], 201);
+    }
+
+    /**
+     * POST /pedir/status/{codigoQr}/push/inscrever
+     * Cliente autorizou notificacao no navegador enquanto acompanha o pedido - guarda a
+     * inscricao (formato padrao PushSubscription.toJSON()) pra poder avisar quando o status
+     * mudar, sem precisar ficar com a aba aberta olhando o polling.
+     */
+    public function inscreverPush(Request $request, string $codigoQr): JsonResponse
+    {
+        $pedido = Pedido::where('codigo_qr', $codigoQr)
+            ->where('canal_origem', 'ONLINE')
+            ->first();
+
+        if (!$pedido) {
+            return response()->json(['message' => 'Pedido nao encontrado.'], 404);
+        }
+
+        $data = $request->validate([
+            'endpoint' => ['required', 'string'],
+            'keys.p256dh' => ['required', 'string'],
+            'keys.auth' => ['required', 'string'],
+        ]);
+
+        PushSubscription::updateOrCreate(
+            ['id_pedido' => $pedido->id_pedido, 'endpoint' => $data['endpoint']],
+            ['chave_p256dh' => $data['keys']['p256dh'], 'chave_auth' => $data['keys']['auth']],
+        );
+
+        return response()->json(['ok' => true], 201);
     }
 }

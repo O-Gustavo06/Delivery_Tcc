@@ -5,10 +5,13 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Cliente;
 use App\Models\Entrega;
+use App\Models\EstoqueMovimento;
+use App\Models\Ingrediente;
 use App\Models\Mesa;
 use App\Models\Pagamento;
 use App\Models\Pedido;
 use App\Models\Produto;
+use App\Models\ProdutoIngrediente;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -78,10 +81,13 @@ class AdminOrderController extends Controller
         'BALCAO' => 'balcao',
     ];
 
+    /** Status em que a baixa de estoque (via receita do produto) ja foi feita alguma vez. */
+    private const STATUS_COM_ESTOQUE_DEDUZIDO = ['CONFIRMADO', 'PREPARANDO', 'PRONTO', 'ENTREGANDO'];
+
     public function index(Request $request): JsonResponse
     {
         $page = (int) $request->query('page', 1);
-        $query = Pedido::with(['cliente.usuario', 'mesa', 'itens.produto', 'entrega', 'pagamento'])
+        $query = Pedido::with(['cliente.usuario', 'mesa', 'itens.produto', 'entrega', 'pagamento', 'avaliacao'])
             ->orderByDesc('dt_pedido');
 
         $status = $request->query('status');
@@ -111,7 +117,7 @@ class AdminOrderController extends Controller
 
     public function show(string $orderId): JsonResponse
     {
-        $order = Pedido::with(['cliente.usuario', 'mesa', 'itens.produto', 'entrega', 'pagamento'])->find((int) $orderId);
+        $order = Pedido::with(['cliente.usuario', 'mesa', 'itens.produto', 'entrega', 'pagamento', 'avaliacao'])->find((int) $orderId);
 
         if (!$order) {
             return response()->json(['message' => 'Pedido nao encontrado.'], 404);
@@ -137,10 +143,12 @@ class AdminOrderController extends Controller
             'longitude' => ['nullable', 'numeric', 'between:-180,180'],
             'payment_method' => ['nullable', 'string', 'in:pix,cartao,dinheiro'],
             'change_for' => ['nullable', 'numeric', 'min:0'],
+            'note' => ['nullable', 'string', 'max:500'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.name' => ['required', 'string', 'max:255'],
             'items.*.qty' => ['required', 'integer', 'min:1'],
             'items.*.price' => ['required', 'numeric', 'min:0'],
+            'items.*.note' => ['nullable', 'string', 'max:255'],
         ]);
 
         if (!isset(self::FRONT_TO_DB_TYPE[$data['type']])) {
@@ -189,7 +197,11 @@ class AdminOrderController extends Controller
             $longitude = $coordenadas['lng'] ?? null;
         }
 
-        $order = DB::transaction(function () use ($data, $telefoneDigits, $latitude, $longitude) {
+        $taxaEntrega = $data['type'] === 'delivery'
+            ? app(\App\Services\TaxaEntregaService::class)->calcular($latitude, $longitude)
+            : 0;
+
+        $order = DB::transaction(function () use ($data, $telefoneDigits, $latitude, $longitude, $taxaEntrega) {
             $companyId = (int) DB::table('empresa')->orderBy('id_empresa')->value('id_empresa');
             if (!$companyId) {
                 abort(422, 'Nenhuma empresa cadastrada para receber pedidos.');
@@ -241,8 +253,9 @@ class AdminOrderController extends Controller
                 'canal_origem' => $canalOrigem,
                 'status' => 'PENDENTE',
                 'vl_total' => round($total, 2),
-                'vl_taxa_entrega' => $data['type'] === 'delivery' ? 8 : 0,
+                'vl_taxa_entrega' => $taxaEntrega,
                 'ds_observacao' => $data['address'] ?? null,
+                'ds_nota_pedido' => !empty($data['note']) ? mb_strtoupper($data['note']) : null,
                 'dt_pedido' => now(),
                 'dt_conclusao' => null,
                 'dt_atualizacao' => now(),
@@ -273,7 +286,7 @@ class AdminOrderController extends Controller
                     'nr_quantidade' => $item['qty'],
                     'vl_preco_unitario' => $item['price'],
                     'vl_subtotal' => $item['qty'] * $item['price'],
-                    'adicionais_json' => null,
+                    'adicionais_json' => !empty($item['note']) ? json_encode(['observacao' => mb_strtoupper($item['note'])]) : null,
                     'dt_cadastro' => now(),
                 ]);
             }
@@ -311,7 +324,7 @@ class AdminOrderController extends Controller
                 Mesa::whereKey($mesaId)->update(['status_ocupacao' => 'OCUPADA']);
             }
 
-            return Pedido::with(['cliente.usuario', 'mesa', 'itens.produto', 'entrega', 'pagamento'])->findOrFail($orderId);
+            return Pedido::with(['cliente.usuario', 'mesa', 'itens.produto', 'entrega', 'pagamento', 'avaliacao'])->findOrFail($orderId);
         });
 
         return response()->json($this->toPayload($order), 201);
@@ -336,16 +349,56 @@ class AdminOrderController extends Controller
             return response()->json(['message' => 'Pedido nao encontrado.'], 404);
         }
 
+        // Precisa capturar ANTES de reatribuir $order->status - depois do save() o Eloquent ja
+        // sincroniza o "original" com o valor novo, entao getOriginal() nao serviria aqui.
+        $previousStatus = $order->status;
+
         $dbStatus = self::FRONT_TO_DB_STATUS[$data['status']];
         $order->status = $dbStatus;
         $order->dt_conclusao = in_array($dbStatus, ['FINALIZADO', 'CANCELADO'], true) ? now() : null;
         $order->motivo_cancelamento = $dbStatus === 'CANCELADO' ? ($data['motivo'] ?? null) : null;
         $order->save();
 
+        // Avisa o cliente que esta acompanhando pelo link publico, se ele autorizou
+        // notificacao no navegador. So faz sentido pra canal ONLINE (delivery/balcao pelo
+        // cardapio) - pedido de mesa nao tem essa tela de acompanhamento.
+        if ($previousStatus !== $dbStatus && $order->canal_origem === 'ONLINE') {
+            app(\App\Services\PushNotificationService::class)->notificarMudancaDeStatus($order);
+        }
+
+        // Baixa o estoque dos ingredientes (via receita do produto) na primeira vez que o
+        // pedido entra em preparo. So dispara nessa transicao exata pra nao baixar de novo se
+        // o mesmo pedido for "enviado pra cozinha" mais de uma vez.
+        if ($previousStatus === 'PENDENTE' && $dbStatus === 'CONFIRMADO') {
+            $this->baixarEstoquePorPedido($order);
+        }
+
+        // Se um pedido que ja tinha baixado estoque for cancelado, repoe as quantidades. Nao
+        // repoe se ele nunca chegou a baixar (ainda PENDENTE) nem se ja tinha sido cancelado
+        // antes (evita repor duas vezes).
+        if ($dbStatus === 'CANCELADO' && in_array($previousStatus, self::STATUS_COM_ESTOQUE_DEDUZIDO, true)) {
+            $this->reporEstoquePorPedido($order);
+        }
+
         if ($order->mesa) {
             $order->mesa->update([
                 'status_ocupacao' => in_array($dbStatus, ['FINALIZADO', 'CANCELADO'], true) ? 'LIVRE' : 'OCUPADA',
             ]);
+        }
+
+        // Delivery/balcao nao tem uma etapa separada de "fechar a comanda e confirmar
+        // pagamento" (isso so existe pra mesa, via ComandaController::confirmarPagamento) -
+        // "entregue" JA E o momento em que o dinheiro/pix/cartao foi recebido, entao e aqui
+        // que o pagamento vira APROVADO e passa a contar como receita no financeiro.
+        if ($dbStatus === 'FINALIZADO' && $order->tipo_pedido !== 'MESA' && $order->pagamento) {
+            $order->pagamento->update(['status' => 'APROVADO']);
+        }
+
+        // Pedido cancelado nunca vai ser pago - sem isso ele ficava PENDENTE pra sempre e
+        // entrava contando como "pagamento pendente"/"conta a receber" no financeiro, mesmo
+        // sem nenhuma chance real de ser cobrado.
+        if ($dbStatus === 'CANCELADO' && $order->pagamento && $order->pagamento->status === 'PENDENTE') {
+            $order->pagamento->update(['status' => 'CANCELADO']);
         }
 
         $statusEntrega = match ($dbStatus) {
@@ -362,6 +415,58 @@ class AdminOrderController extends Controller
         }
 
         return response()->json($this->toPayload($order->fresh(['cliente.usuario', 'mesa', 'itens.produto', 'entrega', 'pagamento'])));
+    }
+
+    /**
+     * Percorre os itens do pedido e, pra cada um, olha a receita (produto_ingrediente) pra
+     * saber quanto de cada ingrediente foi consumido (qtde da receita x quantidade pedida).
+     * Produto sem receita cadastrada simplesmente nao baixa nada (sem erro).
+     */
+    private function baixarEstoquePorPedido(Pedido $order): void
+    {
+        DB::transaction(function () use ($order) {
+            foreach ($order->itens as $item) {
+                $receita = ProdutoIngrediente::where('id_produto', $item->id_produto)->get();
+
+                foreach ($receita as $linha) {
+                    $qtdeBaixa = (float) $linha->qtde * (int) $item->nr_quantidade;
+
+                    EstoqueMovimento::create([
+                        'id_ingrediente' => $linha->id_ingrediente,
+                        'tipo' => 'SAIDA',
+                        'qtde' => $qtdeBaixa,
+                        'ds_motivo' => 'Pedido #' . $order->id_pedido,
+                    ]);
+
+                    Ingrediente::whereKey($linha->id_ingrediente)->decrement('qtd_atual', $qtdeBaixa);
+                }
+            }
+        });
+    }
+
+    /**
+     * Reverte a baixa feita em baixarEstoquePorPedido() quando o pedido e cancelado - repoe
+     * exatamente as quantidades que tinham sido descontadas (a partir dos proprios movimentos
+     * SAIDA registrados pra esse pedido, nao recalculando a receita de novo).
+     */
+    private function reporEstoquePorPedido(Pedido $order): void
+    {
+        DB::transaction(function () use ($order) {
+            $movimentos = EstoqueMovimento::where('tipo', 'SAIDA')
+                ->where('ds_motivo', 'Pedido #' . $order->id_pedido)
+                ->get();
+
+            foreach ($movimentos as $movimento) {
+                EstoqueMovimento::create([
+                    'id_ingrediente' => $movimento->id_ingrediente,
+                    'tipo' => 'ENTRADA',
+                    'qtde' => $movimento->qtde,
+                    'ds_motivo' => 'Cancelamento pedido #' . $order->id_pedido,
+                ]);
+
+                Ingrediente::whereKey($movimento->id_ingrediente)->increment('qtd_atual', $movimento->qtde);
+            }
+        });
     }
 
     public function sendToKitchen(string $orderId): JsonResponse
@@ -383,19 +488,26 @@ class AdminOrderController extends Controller
             'customer_name' => $order->cliente?->usuario?->nm_usuario ?? 'Cliente',
             'customer_phone' => $order->cliente?->telefone,
             'address' => $order->tipo_pedido === 'DELIVERY' ? $order->ds_observacao : null,
+            'note' => $order->ds_nota_pedido,
             'status' => self::DB_TO_FRONT_STATUS[$order->status] ?? 'novo',
             'motivo_cancelamento' => $order->motivo_cancelamento,
             'total' => (float) $order->vl_total,
             'codigo_qr' => $order->codigo_qr,
             'confirmation_code' => $order->entrega?->codigo_confirmacao_entrega,
             'payment_method' => self::DB_TO_FRONT_PAYMENT[$order->pagamento?->forma] ?? null,
+            'payment_status' => $order->pagamento?->status,
             'change_for' => $order->pagamento?->troco_para !== null ? (float) $order->pagamento->troco_para : null,
             'items' => $order->itens->map(fn ($item) => [
                 'name' => $item->produto?->nm_produto ?? 'Item',
                 'qty' => (int) $item->nr_quantidade,
                 'price' => (float) $item->vl_preco_unitario,
+                'note' => $item->adicionais_json['observacao'] ?? null,
             ])->values()->all(),
             'created_at' => optional($order->dt_pedido)->format('Y-m-d H:i:s'),
+            'avaliacao' => $order->avaliacao ? [
+                'nota' => $order->avaliacao->nota,
+                'comentario' => $order->avaliacao->ds_comentario,
+            ] : null,
         ];
     }
 }

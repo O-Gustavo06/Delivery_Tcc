@@ -9,16 +9,18 @@ import Mesas from './pages/Mesas.jsx'
 import Entrega from './pages/Entrega.jsx'
 import Financeiro from './pages/Financeiro.jsx'
 import Relatorios from './pages/Relatorios.jsx'
+import Compras from './pages/Compras.jsx'
+import Cardapio from './pages/Cardapio.jsx'
 import Clientes from './pages/Clientes.jsx'
-import Peidos_Ifood from './pages/Peidos_Ifood.jsx'
+import Pedidos_Ifood from './pages/Pedidos_Ifood.jsx'
 import WhatsApp from './pages/whatsApp.jsx'
 import CardapioPublico from './pages_delivery/CardapioPublico.jsx'
 import MesaPublica from './pages_delivery/MesaPublica.jsx'
 import logo from './assets/logo.png'
+import { resolveApiBase } from './utils/apiBase'
 
 
-const API_BASE =
-  import.meta.env.VITE_API_BASE || `http://${window.location.hostname}:8000/api`
+const API_BASE = resolveApiBase()
 const DEMO_CREDENTIALS = {
   email: 'gustavolimadossantos643@gmail.com',
   password: 'admin123',
@@ -41,29 +43,31 @@ const statusTone = {
   enviado_cozinha: 'badge-orange',
   em_preparo: 'badge-blue',
   pronto: 'badge-green',
-  saiu_entrega: 'badge-lime',
-  entregue: 'badge-muted',
+  saiu_entrega: 'badge-sun',
+  entregue: 'badge-green',
   cancelado: 'badge-red',
 }
 
 const routes = [
   { path: '/painel', label: 'Painel', code: 'PN' },
   { path: '/pedidos', label: 'Pedidos', code: 'PD' },
+  { path: '/cardapio', label: 'Cardapio', code: 'CD' },
   { path: '/cozinha', label: 'Cozinha', code: 'CZ' },
   { path: '/mesas', label: 'Mesas', code: 'MS' },
   { path: '/entrega', label: 'Entrega', code: 'EN' },
   { path: '/usuarios', label: 'Usuarios', code: 'US' },
   { path: '/financeiro', label: 'Financeiro', code: 'FN' },
   { path: '/relatorios', label: 'Relatorios', code: 'RL' },
+  { path: '/compras', label: 'Compras e Lucros', code: 'CP' },
   { path: '/clientes', label: 'Clientes', code: 'CL' },
-  { path: '/peidos_ifood', label: 'Pedidos iFood', code: 'IF' },
+  { path: '/pedidos_ifood', label: 'Pedidos iFood', code: 'IF' },
   { path: '/whatsapp', label: 'WhatsApp', code: 'WA' },
 ]
 
 const navGroups = [
-  { label: 'Operação', paths: ['/painel', '/pedidos', '/cozinha', '/mesas', '/entrega'] },
-  { label: 'Gestão', paths: ['/usuarios', '/financeiro', '/relatorios', '/clientes'] },
-  { label: 'Canais', paths: ['/peidos_ifood', '/whatsapp'] },
+  { label: 'Operação', paths: ['/painel', '/pedidos', '/cardapio', '/cozinha', '/mesas', '/entrega'] },
+  { label: 'Gestão', paths: ['/usuarios', '/financeiro', '/relatorios', '/compras', '/clientes'] },
+  { label: 'Canais', paths: ['/pedidos_ifood', '/whatsapp'] },
 ]
 
 const roleLabels = {
@@ -109,6 +113,7 @@ const EMPTY_DASHBOARD_DATA = {
     kpis: [],
     cashFlow: [],
     paymentMethods: [],
+    pendingPayments: [],
     checklist: [],
   },
   reportsData: {
@@ -125,11 +130,6 @@ const EMPTY_DASHBOARD_DATA = {
     scorecards: [],
     queues: [],
     actions: [],
-  },
-  whatsappData: {
-    inbox: [],
-    automations: [],
-    campaigns: [],
   },
 }
 
@@ -159,12 +159,15 @@ const mapApiOrder = (order) => ({
   tableNumber: order.table_number ?? order.tableNumber ?? null,
   customerName: String(order.customer_name ?? order.customerName ?? ''),
   address: order.address ? String(order.address) : undefined,
+  note: order.note ? String(order.note) : undefined,
   status: order.status,
+  paymentStatus: order.payment_status ?? null,
   motivoCancelamento: order.motivo_cancelamento ?? null,
   codigoQr: order.codigo_qr ?? null,
   total: Number(order.total ?? 0),
   items: Array.isArray(order.items) ? order.items : [],
   createdAt: formatTime(String(order.created_at ?? order.createdAt ?? '')),
+  avaliacao: order.avaliacao ?? null,
 })
 
 const mapApiUser = (user) => ({
@@ -195,7 +198,6 @@ const mergeDashboardData = (payload = {}) => ({
   reportsData: { ...EMPTY_DASHBOARD_DATA.reportsData, ...(payload.reportsData ?? {}) },
   customersData: { ...EMPTY_DASHBOARD_DATA.customersData, ...(payload.customersData ?? {}) },
   marketplaceData: { ...EMPTY_DASHBOARD_DATA.marketplaceData, ...(payload.marketplaceData ?? {}) },
-  whatsappData: { ...EMPTY_DASHBOARD_DATA.whatsappData, ...(payload.whatsappData ?? {}) },
 })
 
 export default function App() {
@@ -211,6 +213,16 @@ export default function App() {
   const [isNewOrderOpen, setIsNewOrderOpen] = useState(false)
   const [comandasPendentes, setComandasPendentes] = useState([])
   const [empresa, setEmpresa] = useState(null)
+  const [theme, setTheme] = useState(() => window.localStorage.getItem('theme') || 'light')
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    window.localStorage.setItem('theme', theme)
+  }, [theme])
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
+  }, [])
 
   useEffect(() => {
     if (AUTH_BYPASS) {
@@ -446,6 +458,444 @@ export default function App() {
     setDashboardData(mergeDashboardData(payload))
   }, [getAuthToken])
 
+  const fetchIngredientes = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return null
+
+    const response = await fetch(`${API_BASE}/admin/ingredientes`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) return null
+
+    return response.json()
+  }, [getAuthToken])
+
+  const fetchCompras = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return null
+
+    const response = await fetch(`${API_BASE}/admin/compras`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) return null
+
+    return response.json()
+  }, [getAuthToken])
+
+  const fetchResumoFinanceiro = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return null
+
+    const response = await fetch(`${API_BASE}/admin/financeiro/resumo?meses=6`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) return null
+
+    return response.json()
+  }, [getAuthToken])
+
+  const registrarCompra = useCallback(
+    async (payload) => {
+      const token = await getAuthToken()
+      if (!token) {
+        return { ok: false, message: 'Sem token de acesso.' }
+      }
+
+      const response = await fetch(`${API_BASE}/admin/compras`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao registrar compra.' }
+      }
+
+      return { ok: true, message: '' }
+    },
+    [getAuthToken],
+  )
+
+  const criarIngrediente = useCallback(
+    async (payload) => {
+      const token = await getAuthToken()
+      if (!token) {
+        return { ok: false, message: 'Sem token de acesso.' }
+      }
+
+      const response = await fetch(`${API_BASE}/admin/ingredientes`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao criar ingrediente.' }
+      }
+
+      const ingrediente = await response.json()
+      return { ok: true, message: '', ingrediente }
+    },
+    [getAuthToken],
+  )
+
+  const editarIngrediente = useCallback(
+    async (ingredienteId, payload) => {
+      const token = await getAuthToken()
+      if (!token) {
+        return { ok: false, message: 'Sem token de acesso.' }
+      }
+
+      const response = await fetch(`${API_BASE}/admin/ingredientes/${ingredienteId}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao editar ingrediente.' }
+      }
+
+      return { ok: true, message: '' }
+    },
+    [getAuthToken],
+  )
+
+  const registrarMovimentoAvulso = useCallback(
+    async (payload) => {
+      const token = await getAuthToken()
+      if (!token) {
+        return { ok: false, message: 'Sem token de acesso.' }
+      }
+
+      const response = await fetch(`${API_BASE}/admin/estoque/movimento`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao registrar movimento de estoque.' }
+      }
+
+      const resultado = await response.json()
+      return { ok: true, message: '', ingrediente: resultado.ingrediente }
+    },
+    [getAuthToken],
+  )
+
+  const fetchWhatsappStatus = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return null
+
+    const response = await fetch(`${API_BASE}/admin/whatsapp/status`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) return null
+
+    return response.json()
+  }, [getAuthToken])
+
+  const criarWhatsappInstancia = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+    const response = await fetch(`${API_BASE}/admin/whatsapp/instancia`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => ({}))
+      return { ok: false, message: errorPayload.message || 'Falha ao criar instancia do WhatsApp.' }
+    }
+
+    return { ok: true, message: '', data: await response.json() }
+  }, [getAuthToken])
+
+  const gerarWhatsappQrCode = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+    const response = await fetch(`${API_BASE}/admin/whatsapp/qrcode`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => ({}))
+      return { ok: false, message: errorPayload.message || 'Falha ao gerar QR Code.' }
+    }
+
+    return { ok: true, message: '', data: await response.json() }
+  }, [getAuthToken])
+
+  const desconectarWhatsapp = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+    const response = await fetch(`${API_BASE}/admin/whatsapp/desconectar`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => ({}))
+      return { ok: false, message: errorPayload.message || 'Falha ao desconectar o WhatsApp.' }
+    }
+
+    return { ok: true, message: '', data: await response.json() }
+  }, [getAuthToken])
+
+  const reconectarWhatsapp = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+    const response = await fetch(`${API_BASE}/admin/whatsapp/reconectar`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => ({}))
+      return { ok: false, message: errorPayload.message || 'Falha ao reconectar o WhatsApp.' }
+    }
+
+    return { ok: true, message: '', data: await response.json() }
+  }, [getAuthToken])
+
+  const fetchWhatsappConversas = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return null
+
+    const response = await fetch(`${API_BASE}/admin/whatsapp/conversas`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) return null
+
+    return response.json()
+  }, [getAuthToken])
+
+  const fetchProdutos = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return null
+
+    const response = await fetch(`${API_BASE}/admin/produtos`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) return null
+
+    return response.json()
+  }, [getAuthToken])
+
+  const fetchCategorias = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return null
+
+    const response = await fetch(`${API_BASE}/admin/categorias`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) return null
+
+    return response.json()
+  }, [getAuthToken])
+
+  const criarProduto = useCallback(
+    async (payload) => {
+      const token = await getAuthToken()
+      if (!token) {
+        return { ok: false, message: 'Sem token de acesso.' }
+      }
+
+      const formData = new FormData()
+      Object.entries(payload).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          formData.append(key, value)
+        }
+      })
+
+      const response = await fetch(`${API_BASE}/admin/produtos`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao criar produto.' }
+      }
+
+      return { ok: true, message: '' }
+    },
+    [getAuthToken],
+  )
+
+  const criarCategoria = useCallback(
+    async (nome) => {
+      const token = await getAuthToken()
+      if (!token) {
+        return { ok: false, message: 'Sem token de acesso.' }
+      }
+
+      const response = await fetch(`${API_BASE}/admin/categorias`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ nome }),
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao criar categoria.' }
+      }
+
+      const categoria = await response.json()
+      return { ok: true, message: '', categoria }
+    },
+    [getAuthToken],
+  )
+
+  const atualizarProduto = useCallback(
+    async (produtoId, payload) => {
+      const token = await getAuthToken()
+      if (!token) {
+        return { ok: false, message: 'Sem token de acesso.' }
+      }
+
+      const response = await fetch(`${API_BASE}/admin/produtos/${produtoId}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao atualizar produto.' }
+      }
+
+      return { ok: true, message: '' }
+    },
+    [getAuthToken],
+  )
+
+  const editarProduto = useCallback(
+    async (produtoId, payload) => {
+      const token = await getAuthToken()
+      if (!token) {
+        return { ok: false, message: 'Sem token de acesso.' }
+      }
+
+      // FormData + spoof de metodo (POST com _method=PATCH): PHP nao le corpo multipart em
+      // requisicoes PATCH de verdade, e essa e a unica forma de mandar a foto nova junto com
+      // os outros campos editados numa unica chamada.
+      const formData = new FormData()
+      formData.append('_method', 'PATCH')
+      Object.entries(payload).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          formData.append(key, value)
+        }
+      })
+
+      const response = await fetch(`${API_BASE}/admin/produtos/${produtoId}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao editar produto.' }
+      }
+
+      return { ok: true, message: '' }
+    },
+    [getAuthToken],
+  )
+
+  const excluirProduto = useCallback(
+    async (produtoId) => {
+      const token = await getAuthToken()
+      if (!token) {
+        return { ok: false, message: 'Sem token de acesso.' }
+      }
+
+      const response = await fetch(`${API_BASE}/admin/produtos/${produtoId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao excluir produto.' }
+      }
+
+      return { ok: true, message: '' }
+    },
+    [getAuthToken],
+  )
+
+  const fetchReceitaProduto = useCallback(
+    async (produtoId) => {
+      const token = await getAuthToken()
+      if (!token) return null
+
+      const response = await fetch(`${API_BASE}/admin/produtos/${produtoId}/receita`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!response.ok) return null
+
+      return response.json()
+    },
+    [getAuthToken],
+  )
+
+  const salvarReceitaProduto = useCallback(
+    async (produtoId, itens) => {
+      const token = await getAuthToken()
+      if (!token) {
+        return { ok: false, message: 'Sem token de acesso.' }
+      }
+
+      const response = await fetch(`${API_BASE}/admin/produtos/${produtoId}/receita`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ itens }),
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao salvar receita.' }
+      }
+
+      const receita = await response.json()
+      return { ok: true, message: '', receita }
+    },
+    [getAuthToken],
+  )
+
   const confirmarPagamentoComanda = useCallback(
     async (comandaId) => {
       const token = await getAuthToken()
@@ -532,6 +982,125 @@ export default function App() {
       return { ok: true, data: await response.json() }
     },
     [getAuthToken],
+  )
+
+  const liberarMesa = useCallback(
+    async (mesaId) => {
+      const token = await getAuthToken()
+      if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+      const response = await fetch(`${API_BASE}/admin/mesas/${mesaId}/liberar`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao liberar a mesa.' }
+      }
+
+      await fetchDashboardFromApi()
+
+      return { ok: true, message: '' }
+    },
+    [getAuthToken, fetchDashboardFromApi],
+  )
+
+  const adicionarNaFilaEspera = useCallback(
+    async (payload) => {
+      const token = await getAuthToken()
+      if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+      const response = await fetch(`${API_BASE}/admin/mesas/fila-espera`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao adicionar na fila de espera.' }
+      }
+
+      await fetchDashboardFromApi()
+
+      return { ok: true, message: '' }
+    },
+    [getAuthToken, fetchDashboardFromApi],
+  )
+
+  const removerDaFilaEspera = useCallback(
+    async (id) => {
+      const token = await getAuthToken()
+      if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+      const response = await fetch(`${API_BASE}/admin/mesas/fila-espera/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao remover da fila de espera.' }
+      }
+
+      await fetchDashboardFromApi()
+
+      return { ok: true, message: '' }
+    },
+    [getAuthToken, fetchDashboardFromApi],
+  )
+
+  const exportarRelatorio = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+    const response = await fetch(`${API_BASE}/admin/relatorios/export`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (!response.ok) {
+      return { ok: false, message: 'Falha ao gerar o relatorio.' }
+    }
+
+    const blob = await response.blob()
+    const disposition = response.headers.get('Content-Disposition') || ''
+    const match = disposition.match(/filename="?([^"]+)"?/)
+    const filename = match ? match[1] : 'relatorio-pedidos.csv'
+
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+
+    return { ok: true, message: '' }
+  }, [getAuthToken])
+
+  const atualizarChecklistFinanceiro = useCallback(
+    async (itemId, checked) => {
+      const token = await getAuthToken()
+      if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+      const response = await fetch(`${API_BASE}/admin/financeiro/checklist`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: itemId, checked }),
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao atualizar checklist.' }
+      }
+
+      await fetchDashboardFromApi()
+
+      return { ok: true, message: '' }
+    },
+    [getAuthToken, fetchDashboardFromApi],
   )
 
   const fetchEntregadorEntregas = useCallback(
@@ -642,20 +1211,28 @@ export default function App() {
 
   // Pedido novo (mesa ou cardapio online) precisa aparecer sozinho pra cozinha, sem
   // depender de alguem apertar F5. Atualiza em segundo plano enquanto a tela mostra pedidos.
+  // Mesas tambem entra aqui: cliente escaneando o QR e ocupando a mesa precisa refletir no
+  // painel sem o admin precisar recarregar a pagina.
   useEffect(() => {
     if (!isAuthenticated || !apiEnabled) return undefined
 
-    const precisaPedidosAoVivo =
-      route === '/pedidos' || route === '/painel' || route === '/cozinha' || route === '/entrega'
-    if (!precisaPedidosAoVivo) return undefined
+    const precisaAoVivo =
+      route === '/pedidos' || route === '/painel' || route === '/cozinha' || route === '/entrega' || route === '/mesas'
+    if (!precisaAoVivo) return undefined
 
     const timer = setInterval(() => {
+      if (route === '/mesas') {
+        void fetchDashboardFromApi()
+        void fetchComandasPendentes()
+        return
+      }
+
       void fetchOrdersFromApi()
       if (route === '/painel') void fetchDashboardFromApi()
     }, 8000)
 
     return () => clearInterval(timer)
-  }, [apiEnabled, isAuthenticated, route, fetchOrdersFromApi, fetchDashboardFromApi])
+  }, [apiEnabled, isAuthenticated, route, fetchOrdersFromApi, fetchDashboardFromApi, fetchComandasPendentes])
 
   const todayLabel = useMemo(
     () =>
@@ -692,14 +1269,16 @@ export default function App() {
     const subtitles = {
       '/painel': 'Visao executiva da operacao em tempo real',
       '/pedidos': 'Controle central de pedidos',
+      '/cardapio': 'Itens, precos e categorias do cardapio',
       '/cozinha': 'Fila de preparo e expedicao da cozinha',
       '/mesas': 'Ocupacao, reservas e fila de espera do salao',
       '/entrega': 'Rotas, motoboys e monitoramento de entregas',
       '/usuarios': 'Gestao de perfis e acessos internos',
       '/financeiro': 'Fluxo de caixa, comissoes e fechamento diario',
       '/relatorios': 'Indicadores operacionais e financeiros consolidados',
+      '/compras': 'Compras, estoque de ingredientes e lucro mensal',
       '/clientes': 'Base de clientes, segmentos e campanhas',
-      '/peidos_ifood': 'Integracoes com apps, canais externos e cadastro do cardapio online',
+      '/pedidos_ifood': 'Integracoes com apps, canais externos e cadastro do cardapio online',
       '/whatsapp': 'Atendimento, automacoes e campanhas no WhatsApp',
     }
 
@@ -709,7 +1288,7 @@ export default function App() {
   if (isPublicMenuRoute) {
     return (
       <div className="delivery-shell">
-        <CardapioPublico />
+        <CardapioPublico theme={theme} onToggleTheme={toggleTheme} />
       </div>
     )
   }
@@ -717,7 +1296,7 @@ export default function App() {
   if (isPublicMesaRoute) {
     return (
       <div className="delivery-shell">
-        <MesaPublica />
+        <MesaPublica theme={theme} onToggleTheme={toggleTheme} />
       </div>
     )
   }
@@ -801,6 +1380,15 @@ export default function App() {
             </div>
           </div>
           <div className="topbar-right">
+            <button
+              className="btn btn-light theme-toggle"
+              type="button"
+              onClick={toggleTheme}
+              aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
+              title={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
+            >
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
             <span className="topbar-date">{todayLabel}</span>
             <select
               className="route-select"
@@ -835,6 +1423,20 @@ export default function App() {
               onUpdateStatus={updateOrderStatus}
             />
           )}
+          {route === '/cardapio' && (
+            <Cardapio
+              onFetchProdutos={fetchProdutos}
+              onFetchCategorias={fetchCategorias}
+              onCriarProduto={criarProduto}
+              onCriarCategoria={criarCategoria}
+              onAtualizarProduto={atualizarProduto}
+              onEditarProduto={editarProduto}
+              onExcluirProduto={excluirProduto}
+              onFetchIngredientes={fetchIngredientes}
+              onFetchReceita={fetchReceitaProduto}
+              onSalvarReceita={salvarReceitaProduto}
+            />
+          )}
           {route === '/usuarios' && (
             <Usuarios
               users={users}
@@ -866,6 +1468,9 @@ export default function App() {
               empresa={empresa}
               onUpdateEmpresa={updateEmpresa}
               onFetchMesaDetalhe={fetchMesaDetalhe}
+              onLiberarMesa={liberarMesa}
+              onAdicionarFilaEspera={adicionarNaFilaEspera}
+              onRemoverFilaEspera={removerDaFilaEspera}
             />
           )}
           {route === '/entrega' && (
@@ -875,11 +1480,42 @@ export default function App() {
               onFetchEntregadorEntregas={fetchEntregadorEntregas}
             />
           )}
-          {route === '/financeiro' && <Financeiro financeData={dashboardData.financeData} />}
-          {route === '/relatorios' && <Relatorios reportsData={dashboardData.reportsData} />}
+          {route === '/financeiro' && (
+            <Financeiro
+              financeData={dashboardData.financeData}
+              onVerPedido={(numero) => {
+                setFilters({ search: String(numero), status: 'all', type: 'all' })
+                navigate('/pedidos')
+              }}
+              onAtualizarChecklist={atualizarChecklistFinanceiro}
+            />
+          )}
+          {route === '/relatorios' && (
+            <Relatorios reportsData={dashboardData.reportsData} onExportar={exportarRelatorio} />
+          )}
+          {route === '/compras' && (
+            <Compras
+              onFetchIngredientes={fetchIngredientes}
+              onFetchCompras={fetchCompras}
+              onFetchResumoFinanceiro={fetchResumoFinanceiro}
+              onRegistrarCompra={registrarCompra}
+              onCriarIngrediente={criarIngrediente}
+              onEditarIngrediente={editarIngrediente}
+              onRegistrarMovimentoAvulso={registrarMovimentoAvulso}
+            />
+          )}
           {route === '/clientes' && <Clientes customersData={dashboardData.customersData} />}
-          {route === '/peidos_ifood' && <Peidos_Ifood marketplaceData={dashboardData.marketplaceData} />}
-          {route === '/whatsapp' && <WhatsApp whatsappData={dashboardData.whatsappData} />}
+          {route === '/pedidos_ifood' && <Pedidos_Ifood marketplaceData={dashboardData.marketplaceData} />}
+          {route === '/whatsapp' && (
+            <WhatsApp
+              onFetchStatus={fetchWhatsappStatus}
+              onCriarInstancia={criarWhatsappInstancia}
+              onGerarQrCode={gerarWhatsappQrCode}
+              onDesconectar={desconectarWhatsapp}
+              onReconectar={reconectarWhatsapp}
+              onFetchConversas={fetchWhatsappConversas}
+            />
+          )}
 
         </main>
       </div>

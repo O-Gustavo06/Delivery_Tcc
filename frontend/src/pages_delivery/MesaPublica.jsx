@@ -1,24 +1,56 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import QRCode from 'qrcode'
+import { gerarPixCopiaECola } from '../utils/pix'
+import { resolveApiBase, resolveAssetUrl } from '../utils/apiBase'
 
-const API_BASE = import.meta.env.VITE_API_BASE || `http://${window.location.hostname}:8000/api`
+const API_BASE = resolveApiBase()
 
 function formatarPreco(valor) {
   return Number(valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
+// navigator.clipboard exige contexto seguro (https ou localhost) - o celular do cliente
+// acessa a mesa pelo IP da rede local em http, entao cai direto no catch sem copiar nada.
+// O fallback com textarea + execCommand cobre justamente esse caso.
+async function copiarTexto(texto) {
+  if (window.navigator.clipboard && window.isSecureContext) {
+    try {
+      await window.navigator.clipboard.writeText(texto)
+      return true
+    } catch {
+      // segue pro fallback abaixo
+    }
+  }
+
+  try {
+    const textarea = document.createElement('textarea')
+    textarea.value = texto
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    const copiou = document.execCommand('copy')
+    document.body.removeChild(textarea)
+    return copiou
+  } catch {
+    return false
+  }
+}
+
 // Sem fotos reais cadastradas, cada produto ganha um icone + gradiente proprios (baseados
 // no nome) pra nao ficar so texto na lista - like um "prato ilustrado" em vez de foto.
 const VISUAIS_PRODUTO = [
-  { termos: ['pizza'], emoji: '🍕', gradiente: 'linear-gradient(135deg, #f2596a, #f2b53b)' },
-  { termos: ['hamburguer', 'hambúrguer', 'burger', 'lanche', 'x-tudo', 'x-salada', 'x-burguer', 'xis', 'x-bacon'], emoji: '🍔', gradiente: 'linear-gradient(135deg, #d98a4f, #f2b53b)' },
-  { termos: ['batata'], emoji: '🍟', gradiente: 'linear-gradient(135deg, #f2b53b, #e3d24a)' },
-  { termos: ['suco'], emoji: '🧃', gradiente: 'linear-gradient(135deg, #2dd4a7, #b8dcff)' },
-  { termos: ['refrigerante', 'lata', 'refri'], emoji: '🥤', gradiente: 'linear-gradient(135deg, #74b9ff, #b8dcff)' },
-  { termos: ['frango'], emoji: '🍗', gradiente: 'linear-gradient(135deg, #e8b04b, #d98a4f)' },
-  { termos: ['arroz'], emoji: '🍚', gradiente: 'linear-gradient(135deg, #b8dcff, #e3f2ff)' },
-  { termos: ['salada', 'verde'], emoji: '🥗', gradiente: 'linear-gradient(135deg, #2dd4a7, #74b9ff)' },
-  { termos: ['sobremesa', 'doce', 'sorvete', 'bolo'], emoji: '🍰', gradiente: 'linear-gradient(135deg, #f2596a, #b8dcff)' },
-  { termos: ['agua', 'água'], emoji: '💧', gradiente: 'linear-gradient(135deg, #74b9ff, #e3f2ff)' },
+  { termos: ['pizza'], emoji: '🍕', gradiente: 'linear-gradient(135deg, #ff6b57, #ffb347)' },
+  { termos: ['hamburguer', 'hambúrguer', 'burger', 'lanche', 'x-tudo', 'x-salada', 'x-burguer', 'xis', 'x-bacon'], emoji: '🍔', gradiente: 'linear-gradient(135deg, #f7a84b, #e8622c)' },
+  { termos: ['batata'], emoji: '🍟', gradiente: 'linear-gradient(135deg, #ffcf5c, #ffb020)' },
+  { termos: ['suco'], emoji: '🧃', gradiente: 'linear-gradient(135deg, #ff9f43, #ffe08a)' },
+  { termos: ['refrigerante', 'lata', 'refri'], emoji: '🥤', gradiente: 'linear-gradient(135deg, #4fb3e8, #8fd3f4)' },
+  { termos: ['frango'], emoji: '🍗', gradiente: 'linear-gradient(135deg, #e0a13c, #b9752e)' },
+  { termos: ['arroz'], emoji: '🍚', gradiente: 'linear-gradient(135deg, #f4e9d8, #e8d9bd)' },
+  { termos: ['salada', 'verde'], emoji: '🥗', gradiente: 'linear-gradient(135deg, #7bc86c, #4f9d4f)' },
+  { termos: ['sobremesa', 'doce', 'sorvete', 'bolo'], emoji: '🍰', gradiente: 'linear-gradient(135deg, #ff8fa3, #ffc2d1)' },
+  { termos: ['agua', 'água'], emoji: '💧', gradiente: 'linear-gradient(135deg, #6ec3ff, #a8dcff)' },
 ]
 
 function getVisualProduto(nome) {
@@ -27,7 +59,21 @@ function getVisualProduto(nome) {
   return encontrado || { emoji: '🍽️', gradiente: 'linear-gradient(135deg, var(--accent), var(--accent-2))' }
 }
 
-export default function MesaPublica() {
+function ThemeToggleButton({ theme, onToggleTheme }) {
+  return (
+    <button
+      className="mp-theme-toggle"
+      type="button"
+      onClick={onToggleTheme}
+      aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
+      title={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
+    >
+      {theme === 'dark' ? '☀️' : '🌙'}
+    </button>
+  )
+}
+
+export default function MesaPublica({ theme, onToggleTheme }) {
   const token = window.location.pathname.replace('/mesa/', '')
   const sessionKey = `mesa_sessao_${token}`
 
@@ -56,7 +102,10 @@ export default function MesaPublica() {
   const [enviandoPedido, setEnviandoPedido] = useState(false)
   const [formaPagamento, setFormaPagamento] = useState('pix')
   const [fechando, setFechando] = useState(false)
-  const [chavePix, setChavePix] = useState(null)
+  const [qrPixDataUrl, setQrPixDataUrl] = useState('')
+  const [statusCopiaPix, setStatusCopiaPix] = useState(null)
+  const [modoDivisao, setModoDivisao] = useState('junto')
+  const [dividirEntre, setDividirEntre] = useState('2')
 
   const carregarMesa = useCallback(async () => {
     try {
@@ -89,12 +138,36 @@ export default function MesaPublica() {
     carregarMesa()
   }, [carregarMesa])
 
-  // Enquanto a comanda esta aguardando confirmacao do caixa, fica de olho pra saber quando libera.
+  // Fica de olho no cardapio (produto ativado/desativado, preco etc) o tempo todo, mesma logica
+  // do cardapio online - sem isso, o cliente sentado na mesa so via a mudanca dando F5. Enquanto
+  // a comanda esta aguardando confirmacao do caixa, verifica mais rapido pra saber quando libera.
   useEffect(() => {
-    if (mesaData?.comanda?.status !== 'AGUARDANDO_PAGAMENTO') return undefined
-    const timer = setInterval(carregarMesa, 5000)
+    const aguardandoPagamento = mesaData?.comanda?.status === 'AGUARDANDO_PAGAMENTO'
+    const timer = setInterval(carregarMesa, aguardandoPagamento ? 5000 : 15000)
     return () => clearInterval(timer)
   }, [mesaData?.comanda?.status, carregarMesa])
+
+  const chavePix = mesaData?.empresa?.chave_pix || null
+  const nomeEmpresa = mesaData?.empresa?.nome || null
+  const totalComanda = mesaData?.comanda?.total
+
+  // QR do Pix Copia e Cola, sempre em cima da chave e do total atuais da comanda - se o admin
+  // trocar a chave Pix em Mesas, o proximo polling (a cada 5-15s) ja atualiza aqui sozinho.
+  useEffect(() => {
+    if (!chavePix || !totalComanda) {
+      setQrPixDataUrl('')
+      return undefined
+    }
+
+    let cancelado = false
+    const payload = gerarPixCopiaECola({ chave: chavePix, nome: nomeEmpresa, valor: totalComanda })
+    QRCode.toDataURL(payload, { width: 200, margin: 1 }).then((url) => {
+      if (!cancelado) setQrPixDataUrl(url)
+    })
+    return () => {
+      cancelado = true
+    }
+  }, [chavePix, nomeEmpresa, totalComanda])
 
   const handleIdentificar = async (event) => {
     event.preventDefault()
@@ -179,10 +252,15 @@ export default function MesaPublica() {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ forma_pagamento: formaPagamento }),
     })
-    const payload = await response.json().catch(() => ({}))
-    setChavePix(payload.chave_pix || null)
+    await response.json().catch(() => ({}))
     setFechando(false)
     await carregarMesa()
+  }
+
+  const copiarChavePix = async () => {
+    const sucesso = await copiarTexto(chavePix)
+    setStatusCopiaPix(sucesso ? 'sucesso' : 'erro')
+    setTimeout(() => setStatusCopiaPix(null), 2500)
   }
 
   if (loading) {
@@ -240,6 +318,7 @@ export default function MesaPublica() {
               <span>Mesa {mesaData.mesa.numero}</span>
               <strong>Peça direto daqui</strong>
             </div>
+            <ThemeToggleButton theme={theme} onToggleTheme={onToggleTheme} />
           </header>
           <div className="mp-center">
             <div className="mp-card">
@@ -292,6 +371,7 @@ export default function MesaPublica() {
               <span>Mesa {mesaData.mesa.numero}</span>
               <strong>Fechando a conta</strong>
             </div>
+            <ThemeToggleButton theme={theme} onToggleTheme={onToggleTheme} />
           </header>
           <div className="mp-center">
             <div className="mp-card">
@@ -300,7 +380,25 @@ export default function MesaPublica() {
               {comanda.forma_pagamento === 'PIX' ? (
                 <>
                   <p>Pague via Pix e mostre o comprovante pro atendente:</p>
-                  <div className="mp-pix-box">{chavePix || 'Peça a chave Pix ao atendente'}</div>
+                  {chavePix ? (
+                    <div className="mp-pix-preview">
+                      {qrPixDataUrl && <img src={qrPixDataUrl} alt="QR Code Pix" width={200} height={200} />}
+                      <div className="mp-pix-box">{chavePix}</div>
+                      <button className="btn-link-pix" type="button" onClick={copiarChavePix}>
+                        Copiar chave Pix
+                      </button>
+                      {statusCopiaPix === 'sucesso' && (
+                        <small className="mp-pix-copia-status ok">Código copiado com sucesso!</small>
+                      )}
+                      {statusCopiaPix === 'erro' && (
+                        <small className="mp-pix-copia-status erro">
+                          Não foi possível copiar automaticamente. Copie a chave acima manualmente.
+                        </small>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mp-pix-box">Peça a chave Pix ao atendente</div>
+                  )}
                 </>
               ) : (
                 <p>Chame o garçom pra passar o cartão ou receber em dinheiro.</p>
@@ -324,9 +422,12 @@ export default function MesaPublica() {
             <span>Mesa {mesaData.mesa.numero}</span>
             <strong>Olá, {sessao.nome?.split(' ')[0]}</strong>
           </div>
-          <span className={`mp-topbar-status ${comanda ? 'online' : ''}`}>
-            {comanda ? 'Comanda aberta' : 'Nova comanda'}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className={`mp-topbar-status ${comanda ? 'online' : ''}`}>
+              {comanda ? 'Comanda aberta' : 'Nova comanda'}
+            </span>
+            <ThemeToggleButton theme={theme} onToggleTheme={onToggleTheme} />
+          </div>
         </header>
 
         <nav className="mp-tabs">
@@ -361,7 +462,7 @@ export default function MesaPublica() {
                 return (
                   <article className="mp-product-card" key={produto.id}>
                     {produto.imagem ? (
-                      <img className="mp-product-thumb" src={produto.imagem} alt={produto.nome} />
+                      <img className="mp-product-thumb" src={resolveAssetUrl(produto.imagem)} alt={produto.nome} />
                     ) : (
                       <div className="mp-product-thumb mp-product-thumb-icon" style={{ background: visual.gradiente }}>
                         <span>{visual.emoji}</span>
@@ -465,11 +566,84 @@ export default function MesaPublica() {
 
                 <div className="mp-checkout">
                   <h3>Fechar a mesa</h3>
+
+                  <div className="mp-split-tabs">
+                    <button
+                      type="button"
+                      className={modoDivisao === 'junto' ? 'active' : ''}
+                      onClick={() => setModoDivisao('junto')}
+                    >
+                      Pagar junto
+                    </button>
+                    <button
+                      type="button"
+                      className={modoDivisao === 'igual' ? 'active' : ''}
+                      onClick={() => setModoDivisao('igual')}
+                    >
+                      Dividir igual
+                    </button>
+                    <button
+                      type="button"
+                      className={modoDivisao === 'pessoa' ? 'active' : ''}
+                      onClick={() => setModoDivisao('pessoa')}
+                    >
+                      Cada um o seu
+                    </button>
+                  </div>
+
+                  {modoDivisao === 'igual' && (
+                    <div className="mp-split-box">
+                      <label htmlFor="dividir-entre">Dividir entre quantas pessoas?</label>
+                      <input
+                        id="dividir-entre"
+                        type="number"
+                        min="1"
+                        value={dividirEntre}
+                        onChange={(event) => setDividirEntre(event.target.value)}
+                      />
+                      <p className="mp-split-resultado">
+                        {formatarPreco(comanda.total / (Number(dividirEntre) || 1))}{' '}
+                        <span>por pessoa ({dividirEntre || 1}x)</span>
+                      </p>
+                    </div>
+                  )}
+
+                  {modoDivisao === 'pessoa' && (
+                    <div className="mp-split-box">
+                      {comanda.pedidos.map((pedido) => (
+                        <div key={pedido.id_pedido} className="mp-split-row">
+                          <span>{pedido.cliente_nome}</span>
+                          <strong>{formatarPreco(pedido.total)}</strong>
+                        </div>
+                      ))}
+                      <p className="mp-split-hint">Combinem entre vocês quem paga o quê — a mesa fecha com um pagamento só.</p>
+                    </div>
+                  )}
+
                   <select value={formaPagamento} onChange={(event) => setFormaPagamento(event.target.value)}>
                     <option value="pix">Pix</option>
                     <option value="cartao">Cartão</option>
                     <option value="dinheiro">Dinheiro</option>
                   </select>
+
+                  {formaPagamento === 'pix' && chavePix && (
+                    <div className="mp-pix-preview">
+                      {qrPixDataUrl && <img src={qrPixDataUrl} alt="QR Code Pix" width={160} height={160} />}
+                      <div className="mp-pix-box">{chavePix}</div>
+                      <button className="btn-link-pix" type="button" onClick={copiarChavePix}>
+                        Copiar chave Pix
+                      </button>
+                      {statusCopiaPix === 'sucesso' && (
+                        <small className="mp-pix-copia-status ok">Código copiado com sucesso!</small>
+                      )}
+                      {statusCopiaPix === 'erro' && (
+                        <small className="mp-pix-copia-status erro">
+                          Não foi possível copiar automaticamente. Copie a chave acima manualmente.
+                        </small>
+                      )}
+                    </div>
+                  )}
+
                   <button className="mp-primary-btn" type="button" onClick={fecharComanda} disabled={fechando}>
                     {fechando ? 'Fechando...' : 'Fechar comanda'}
                   </button>

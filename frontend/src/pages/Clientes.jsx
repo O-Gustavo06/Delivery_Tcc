@@ -1,6 +1,45 @@
-import React from 'react'
+import React, { useState } from 'react'
+
+function SegmentoModal({ segmento, onClose }) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-panel" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <div>
+            <h2>Clientes {segmento.name}</h2>
+            <p>{segmento.note}</p>
+          </div>
+          <button className="btn btn-light" type="button" onClick={onClose}>
+            Fechar
+          </button>
+        </div>
+
+        {segmento.clientes.length === 0 ? (
+          <p style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>Nenhum cliente nesse segmento ainda.</p>
+        ) : (
+          <div className="data-table">
+            <div className="data-row row-head" style={{ gridTemplateColumns: '1fr 0.5fr 0.6fr' }}>
+              <span>Cliente</span>
+              <span>Pedidos</span>
+              <span>Ticket medio</span>
+            </div>
+            {segmento.clientes.map((cliente) => (
+              <div className="data-row" key={cliente.id} style={{ gridTemplateColumns: '1fr 0.5fr 0.6fr' }}>
+                <strong>{cliente.nome}</strong>
+                <span>{cliente.pedidos}</span>
+                <span>{cliente.ticketMedio}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 export default function Clientes({ customersData }) {
+  const [segmentoAberto, setSegmentoAberto] = useState(null)
+
   return (
     <section className="page-grid page-grid-2-1">
       <div className="page-stack">
@@ -8,17 +47,23 @@ export default function Clientes({ customersData }) {
           <div className="section-head">
             <div>
               <h2>Segmentos</h2>
-              <p>Distribuicao da base por recorrencia e valor medio.</p>
+              <p>Distribuicao da base por recorrencia e valor medio — toque num segmento pra ver os clientes.</p>
             </div>
           </div>
           <div className="mini-grid">
             {customersData.segments.map((segment) => (
-              <div className="info-tile" key={segment.id}>
+              <button
+                type="button"
+                className="info-tile"
+                key={segment.id}
+                onClick={() => setSegmentoAberto(segment)}
+                style={{ textAlign: 'left', cursor: 'pointer', font: 'inherit', width: '100%' }}
+              >
                 <span>{segment.name}</span>
                 <strong>{segment.customers} clientes</strong>
                 <p>{segment.average}</p>
                 <span>{segment.note}</span>
-              </div>
+              </button>
             ))}
           </div>
         </article>
@@ -58,6 +103,10 @@ export default function Clientes({ customersData }) {
           ))}
         </div>
       </article>
+
+      {segmentoAberto && (
+        <SegmentoModal segmento={segmentoAberto} onClose={() => setSegmentoAberto(null)} />
+      )}
     </section>
   )
 }

@@ -19,12 +19,14 @@ class Ingrediente extends Model
         'nm_ingrediente',
         'unidade',
         'fl_ativo',
+        'qtd_atual',
     ];
 
     protected function casts(): array
     {
         return [
             'fl_ativo' => 'boolean',
+            'qtd_atual' => 'decimal:3',
         ];
     }
 

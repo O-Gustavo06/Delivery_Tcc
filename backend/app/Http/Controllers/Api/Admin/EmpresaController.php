@@ -31,6 +31,12 @@ class EmpresaController extends Controller
         $data = $request->validate([
             'nm_empresa' => ['sometimes', 'string', 'max:200'],
             'chave_pix' => ['sometimes', 'nullable', 'string', 'max:150'],
+            'fl_aberto' => ['sometimes', 'boolean'],
+            'config_taxas_km' => ['sometimes', 'nullable', 'array'],
+            'config_taxas_km.taxa_padrao' => ['sometimes', 'numeric', 'min:0'],
+            'config_taxas_km.faixas' => ['sometimes', 'array'],
+            'config_taxas_km.faixas.*.ate_km' => ['required_with:config_taxas_km.faixas', 'numeric', 'min:0.1'],
+            'config_taxas_km.faixas.*.valor' => ['required_with:config_taxas_km.faixas', 'numeric', 'min:0'],
         ]);
 
         $empresa->update($data);
@@ -44,6 +50,8 @@ class EmpresaController extends Controller
             'id' => $empresa->id_empresa,
             'nome' => $empresa->nm_empresa,
             'chave_pix' => $empresa->chave_pix,
+            'aberto' => (bool) $empresa->fl_aberto,
+            'config_taxas_km' => $empresa->config_taxas_km,
         ];
     }
 }
