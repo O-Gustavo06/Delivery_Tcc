@@ -17,6 +17,7 @@ class WhatsappMensagem extends Model
         'id_cliente',
         'direcao',
         'telefone',
+        'nome_contato',
         'conteudo',
         'tipo',
         'id_externo',

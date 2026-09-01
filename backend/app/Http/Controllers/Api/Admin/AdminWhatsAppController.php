@@ -7,6 +7,7 @@ use App\Models\Empresa;
 use App\Services\WhatsApp\EvolutionApiException;
 use App\Services\WhatsApp\WhatsAppService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Throwable;
 
 /**
@@ -47,6 +48,21 @@ class AdminWhatsAppController extends Controller
     public function conversas(): JsonResponse
     {
         return $this->responder(fn () => ['data' => $this->whatsApp->conversas($this->empresaAtual())]);
+    }
+
+    public function mensagens(string $telefone): JsonResponse
+    {
+        return $this->responder(fn () => ['data' => $this->whatsApp->mensagensDoTelefone($this->empresaAtual(), $telefone)]);
+    }
+
+    public function enviarMensagem(Request $request, string $telefone): JsonResponse
+    {
+        $dados = $request->validate(['mensagem' => ['required', 'string', 'max:4096']]);
+
+        return $this->responder(
+            fn () => ['data' => $this->whatsApp->enviarMensagemManual($this->empresaAtual(), $telefone, $dados['mensagem'])],
+            201,
+        );
     }
 
     private function empresaAtual(): Empresa

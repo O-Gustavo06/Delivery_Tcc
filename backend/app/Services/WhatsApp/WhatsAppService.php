@@ -29,6 +29,19 @@ class WhatsAppService
     }
 
     /**
+     * Busca o Cliente cadastrado pelo telefone, tolerando diferenca de DDI entre as tabelas
+     * (o WhatsApp sempre grava com "55" na frente - ex: 5514996111783 - mas o cadastro de
+     * cliente pode ter sido feito sem DDI - ex: 14996111783). Compara pelos ultimos 11
+     * digitos (DDD + numero), que e a parte que realmente identifica o telefone no Brasil.
+     */
+    private function buscarClientePorTelefone(string $telefone): ?Cliente
+    {
+        $ultimosDigitos = substr($telefone, -11);
+
+        return Cliente::whereRaw('RIGHT(telefone, 11) = ?', [$ultimosDigitos])->first();
+    }
+
+    /**
      * Lista as conversas (1 por telefone) da instancia da empresa, com a ultima mensagem de
      * cada uma, mais recente primeiro. Usada pela tela do WhatsApp pra mostrar quem ja
      * escreveu - liga ao Cliente cadastrado (pelo telefone) quando existir, pra mostrar nome
@@ -48,20 +61,111 @@ class WhatsAppService
             ->groupBy('telefone')
             ->pluck('id_whatsapp_mensagem');
 
+        $pendentesPorTelefone = $this->contarPendentesPorTelefone($instancia);
+
         return WhatsappMensagem::with('cliente.usuario')
             ->whereIn('id_whatsapp_mensagem', $idsUltimaMensagemPorTelefone)
             ->orderByDesc('dt_mensagem')
             ->get()
+            ->map(function (WhatsappMensagem $mensagem) use ($pendentesPorTelefone) {
+                // Mensagens antigas podem ter ficado sem id_cliente vinculado (bug de
+                // divergencia de DDI ja corrigido) - tenta de novo pelo telefone antes de
+                // desistir do nome, em vez de exigir reprocessar tudo que ja foi recebido.
+                $cliente = $mensagem->cliente ?? $this->buscarClientePorTelefone($mensagem->telefone);
+                $pendentes = $pendentesPorTelefone[$mensagem->telefone] ?? 0;
+
+                return [
+                    'telefone' => $mensagem->telefone,
+                    'nome' => $cliente?->usuario?->nm_usuario ?? $mensagem->nome_contato,
+                    'ultima_mensagem' => $mensagem->conteudo,
+                    'tipo' => $mensagem->tipo,
+                    'direcao' => $mensagem->direcao,
+                    'dt_mensagem' => $mensagem->dt_mensagem?->toIso8601String(),
+                    'mensagens_pendentes' => $pendentes,
+                    'nao_respondida' => $pendentes > 0,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Conta, por telefone, quantas mensagens recebidas (ENTRADA) ainda nao tiveram resposta
+     * da empresa - ou seja, as mensagens recebidas depois do ultimo envio (SAIDA) nosso, ou
+     * todas as recebidas caso a empresa nunca tenha respondido esse numero.
+     */
+    private function contarPendentesPorTelefone(WhatsappInstance $instancia): array
+    {
+        return WhatsappMensagem::where('id_whatsapp_instancia', $instancia->id_whatsapp_instancia)
+            ->orderBy('telefone')
+            ->orderBy('dt_mensagem')
+            ->get(['telefone', 'direcao'])
+            ->groupBy('telefone')
+            ->map(function ($mensagensDoTelefone) {
+                // Percorre da mais recente pra mais antiga contando ENTRADA ate achar a
+                // primeira SAIDA (a partir dai ja foi respondido).
+                $pendentes = 0;
+                foreach ($mensagensDoTelefone->reverse() as $mensagem) {
+                    if ($mensagem->direcao === 'SAIDA') {
+                        break;
+                    }
+                    $pendentes++;
+                }
+
+                return $pendentes;
+            })
+            ->all();
+    }
+
+    /**
+     * Historico completo de mensagens trocadas com um numero especifico, mais antiga
+     * primeiro (ordem de leitura de chat). Usado pela tela de Conversas ao abrir um contato.
+     */
+    public function mensagensDoTelefone(Empresa $empresa, string $telefone): array
+    {
+        $instancia = $this->instanciaDaEmpresa($empresa);
+        if (!$instancia) {
+            return [];
+        }
+
+        $numero = $this->normalizarTelefone($telefone);
+        $nomeCliente = $this->buscarClientePorTelefone($numero)?->usuario?->nm_usuario;
+
+        $mensagens = WhatsappMensagem::where('id_whatsapp_instancia', $instancia->id_whatsapp_instancia)
+            ->where('telefone', $numero)
+            ->orderBy('dt_mensagem')
+            ->get();
+
+        // Fallback pro pushName mais recente entre as mensagens (o nome exibido no
+        // WhatsApp pode ter sido salvo em qualquer uma delas), quando nao ha Cliente cadastrado.
+        $nome = $nomeCliente ?? $mensagens->last(fn ($m) => $m->nome_contato)?->nome_contato;
+
+        return $mensagens
             ->map(fn (WhatsappMensagem $mensagem) => [
-                'telefone' => $mensagem->telefone,
-                'nome' => $mensagem->cliente?->usuario?->nm_usuario,
-                'ultima_mensagem' => $mensagem->conteudo,
+                'id' => $mensagem->id_whatsapp_mensagem,
+                'nome' => $nome,
+                'conteudo' => $mensagem->conteudo,
                 'tipo' => $mensagem->tipo,
                 'direcao' => $mensagem->direcao,
+                'status_envio' => $mensagem->status_envio,
                 'dt_mensagem' => $mensagem->dt_mensagem?->toIso8601String(),
             ])
             ->values()
             ->all();
+    }
+
+    /** Envio manual disparado pelo atendente na tela de Conversas (nao automatico). */
+    public function enviarMensagemManual(Empresa $empresa, string $telefone, string $mensagem): array
+    {
+        if (trim($mensagem) === '') {
+            throw new EvolutionApiException('Mensagem nao pode ser vazia.');
+        }
+
+        if (!$this->sendMessage($empresa, $telefone, $mensagem)) {
+            throw new EvolutionApiException('Nao foi possivel enviar a mensagem. Verifique se o WhatsApp esta conectado.');
+        }
+
+        return $this->mensagensDoTelefone($empresa, $telefone);
     }
 
     /**
@@ -197,7 +301,7 @@ class WhatsAppService
 
             WhatsappMensagem::create([
                 'id_whatsapp_instancia' => $instancia->id_whatsapp_instancia,
-                'id_cliente' => Cliente::where('telefone', $telefone)->value('id_cliente'),
+                'id_cliente' => $this->buscarClientePorTelefone($numero)?->id_cliente,
                 'direcao' => 'SAIDA',
                 'telefone' => $numero,
                 'conteudo' => $mensagem,
@@ -291,11 +395,17 @@ class WhatsAppService
             ?? $mensagem['message']['extendedTextMessage']['text']
             ?? null;
 
+        // pushName e o nome que o contato configurou no proprio WhatsApp (so vem em
+        // mensagens recebidas, nunca nas que a propria empresa envia) - guarda pra usar
+        // como fallback de exibicao quando o telefone nao bate com nenhum Cliente cadastrado.
+        $pushName = !$fromMe ? ($mensagem['pushName'] ?? null) : null;
+
         WhatsappMensagem::create([
             'id_whatsapp_instancia' => $instancia->id_whatsapp_instancia,
-            'id_cliente' => Cliente::where('telefone', $telefone)->value('id_cliente'),
+            'id_cliente' => $this->buscarClientePorTelefone($telefone)?->id_cliente,
             'direcao' => $fromMe ? 'SAIDA' : 'ENTRADA',
             'telefone' => $telefone,
+            'nome_contato' => $pushName,
             'conteudo' => $texto,
             'tipo' => $mensagem['messageType'] ?? 'texto',
             'id_externo' => $mensagem['key']['id'] ?? null,

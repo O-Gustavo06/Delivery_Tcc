@@ -87,6 +87,8 @@ Route::prefix('admin')->middleware(['auth.api', 'role:admin'])->group(function (
     Route::post('whatsapp/desconectar', [AdminWhatsAppController::class, 'desconectar']);
     Route::post('whatsapp/reconectar', [AdminWhatsAppController::class, 'reconectar']);
     Route::get('whatsapp/conversas', [AdminWhatsAppController::class, 'conversas']);
+    Route::get('whatsapp/conversas/{telefone}/mensagens', [AdminWhatsAppController::class, 'mensagens']);
+    Route::post('whatsapp/conversas/{telefone}/mensagens', [AdminWhatsAppController::class, 'enviarMensagem']);
 });
 
 Route::prefix('mesa')->group(function () {

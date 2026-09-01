@@ -1316,6 +1316,10 @@ body::after {
   font-size: 12px;
 }
 
+.data-row-active {
+  border-color: var(--primary, #2563eb) !important;
+}
+
 .notice-list,
 .timeline-list,
 .check-list {

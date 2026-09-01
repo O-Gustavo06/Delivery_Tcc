@@ -34,6 +34,15 @@ const formatData = (iso) => {
   }
 }
 
+const formatHora = (iso) => {
+  if (!iso) return ''
+  try {
+    return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return ''
+  }
+}
+
 const TIPO_PREVIEW = {
   stickerMessage: 'Figurinha',
   imageMessage: 'Imagem',
@@ -49,6 +58,22 @@ const formatPreview = (conversa) => {
   return conversa.direcao === 'SAIDA' ? `Voce: ${texto}` : texto
 }
 
+const formatConteudoMensagem = (mensagem) => {
+  // O nome exato do campo de texto pode variar conforme a API (texto, mensagem, conteudo,
+  // corpo, body, message, content...). Tentamos os candidatos mais comuns antes de cair
+  // no rotulo do tipo de midia ou num generico "Mensagem".
+  const texto =
+    mensagem.texto ??
+    mensagem.mensagem ??
+    mensagem.conteudo ??
+    mensagem.corpo ??
+    mensagem.body ??
+    mensagem.message ??
+    mensagem.content ??
+    mensagem.ultima_mensagem
+  return texto || TIPO_PREVIEW[mensagem.tipo] || 'Mensagem'
+}
+
 export default function WhatsApp({
   onFetchStatus,
   onCriarInstancia,
@@ -56,6 +81,8 @@ export default function WhatsApp({
   onDesconectar,
   onReconectar,
   onFetchConversas,
+  onFetchMensagens,
+  onEnviarMensagem,
 }) {
   const [dados, setDados] = useState({ existe: false, status: 'inexistente' })
   const [loading, setLoading] = useState(true)
@@ -63,12 +90,28 @@ export default function WhatsApp({
   const [error, setError] = useState('')
   const [conversas, setConversas] = useState([])
   const [conversasLoading, setConversasLoading] = useState(true)
+  const [telefoneSelecionado, setTelefoneSelecionado] = useState(null)
+  const [mensagens, setMensagens] = useState([])
+  const [mensagensLoading, setMensagensLoading] = useState(false)
+  const [textoEnvio, setTextoEnvio] = useState('')
+  const [enviando, setEnviando] = useState(false)
+  const [erroEnvio, setErroEnvio] = useState('')
   const pollRef = useRef(null)
   const pollConversasRef = useRef(null)
+  const pollMensagensRef = useRef(null)
+  const mensagensFimRef = useRef(null)
 
   const carregarStatus = useCallback(async () => {
     const resultado = await onFetchStatus()
-    if (resultado) setDados(resultado)
+    // O endpoint de status nao devolve QR Code (so o de /qrcode devolve). Sem isso, cada
+    // poll de status (a cada 5s, enquanto aguarda leitura) apagava o QR Code que ja estava
+    // na tela antes mesmo dele expirar de verdade, dando so ~5s pra escanear.
+    if (resultado) {
+      setDados((anterior) => ({
+        ...resultado,
+        qrcode: resultado.qrcode ?? (resultado.status !== 'open' ? anterior.qrcode : null),
+      }))
+    }
     return resultado
   }, [onFetchStatus])
 
@@ -76,6 +119,45 @@ export default function WhatsApp({
     const resultado = await onFetchConversas()
     if (resultado?.data) setConversas(resultado.data)
   }, [onFetchConversas])
+
+  const carregarMensagens = useCallback(
+    async (telefone, { silencioso = false } = {}) => {
+      if (!telefone) return
+      if (!silencioso) setMensagensLoading(true)
+      const resultado = await onFetchMensagens(telefone)
+      if (resultado?.data) setMensagens(resultado.data)
+      if (!silencioso) setMensagensLoading(false)
+    },
+    [onFetchMensagens],
+  )
+
+  const abrirConversa = (telefone) => {
+    if (telefone === telefoneSelecionado) return
+    setTelefoneSelecionado(telefone)
+    setErroEnvio('')
+    setMensagens([])
+    carregarMensagens(telefone)
+  }
+
+  const handleEnviarMensagem = async (event) => {
+    event.preventDefault()
+    const texto = textoEnvio.trim()
+    if (!texto || !telefoneSelecionado) return
+
+    setErroEnvio('')
+    setEnviando(true)
+    const resultado = await onEnviarMensagem(telefoneSelecionado, texto)
+    setEnviando(false)
+
+    if (!resultado?.ok) {
+      setErroEnvio(resultado?.message || 'Nao foi possivel enviar a mensagem.')
+      return
+    }
+
+    setTextoEnvio('')
+    if (resultado.data?.data) setMensagens(resultado.data.data)
+    carregarConversas()
+  }
 
   useEffect(() => {
     setLoading(true)
@@ -115,6 +197,26 @@ export default function WhatsApp({
 
     return () => clearInterval(pollConversasRef.current)
   }, [dados.status, carregarConversas])
+
+  // Com uma conversa aberta, fica consultando as mensagens dela periodicamente (de forma
+  // silenciosa, sem re-exibir o "Carregando...") pra novas mensagens aparecerem sozinhas.
+  useEffect(() => {
+    if (!telefoneSelecionado || dados.status !== 'open') {
+      clearInterval(pollMensagensRef.current)
+      return undefined
+    }
+
+    pollMensagensRef.current = setInterval(() => {
+      carregarMensagens(telefoneSelecionado, { silencioso: true })
+    }, 5000)
+
+    return () => clearInterval(pollMensagensRef.current)
+  }, [telefoneSelecionado, dados.status, carregarMensagens])
+
+  // Rola a conversa para o final sempre que novas mensagens chegam ou uma conversa e aberta.
+  useEffect(() => {
+    mensagensFimRef.current?.scrollIntoView({ block: 'end' })
+  }, [mensagens])
 
   const executarAcao = async (acao) => {
     setError('')
@@ -195,7 +297,7 @@ export default function WhatsApp({
                         alt="QR Code para conectar o WhatsApp"
                         style={{ width: 220, height: 220, borderRadius: 12, border: '1px solid var(--line)' }}
                       />
-                      <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: 'var(--text-muted)' }}>
+                      <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: 'var(--muted)' }}>
                         <li>Abra o WhatsApp no celular da empresa.</li>
                         <li>Toque em Mais opcoes (ou Configuracoes) &gt; Aparelhos conectados.</li>
                         <li>Toque em Conectar um aparelho e aponte a camera para o QR Code acima.</li>
@@ -235,32 +337,158 @@ export default function WhatsApp({
             </div>
           </div>
 
-          {conversasLoading ? (
-            <p>Carregando...</p>
-          ) : conversas.length === 0 ? (
-            <p>Nenhuma conversa ainda. Assim que um cliente escrever, ele aparece aqui.</p>
-          ) : (
-            <div className="data-table">
-              {conversas.map((conversa) => (
-                <div
-                  className="data-row"
-                  key={conversa.telefone}
-                  style={{ gridTemplateColumns: '1fr', gap: 4, alignItems: 'start' }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                    <strong>{conversa.nome || formatTelefone(conversa.telefone)}</strong>
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                      {formatData(conversa.dt_mensagem)}
-                    </span>
-                  </div>
-                  {conversa.nome && (
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{formatTelefone(conversa.telefone)}</span>
-                  )}
-                  <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{formatPreview(conversa)}</span>
+          <div style={{ display: 'grid', gridTemplateColumns: telefoneSelecionado ? 'minmax(220px, 320px) 1fr' : '1fr', gap: 16 }}>
+            {conversasLoading ? (
+              <p>Carregando...</p>
+            ) : conversas.length === 0 ? (
+              <p>Nenhuma conversa ainda. Assim que um cliente escrever, ele aparece aqui.</p>
+            ) : (
+              <div className="data-table">
+                {conversas.map((conversa) => {
+                  const selecionada = conversa.telefone === telefoneSelecionado
+                  const naoRespondida = conversa.nao_respondida
+                  return (
+                    <div
+                      className={`data-row${selecionada ? ' data-row-active' : ''}`}
+                      key={conversa.telefone}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => abrirConversa(conversa.telefone)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') abrirConversa(conversa.telefone)
+                      }}
+                      style={{
+                        gridTemplateColumns: '1fr',
+                        gap: 4,
+                        alignItems: 'start',
+                        cursor: 'pointer',
+                        background: selecionada ? 'var(--surface-active, rgba(0,0,0,0.04))' : undefined,
+                        borderRadius: 10,
+                        borderLeft: naoRespondida ? '3px solid var(--danger)' : '3px solid transparent',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {naoRespondida && (
+                            <span
+                              title="Aguardando resposta"
+                              style={{
+                                width: 8,
+                                height: 8,
+                                borderRadius: '50%',
+                                background: 'var(--danger)',
+                                display: 'inline-block',
+                                flexShrink: 0,
+                              }}
+                            />
+                          )}
+                          <strong>{conversa.nome || formatTelefone(conversa.telefone)}</strong>
+                        </span>
+                        <span style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+                          {formatData(conversa.dt_mensagem)}
+                        </span>
+                      </div>
+                      {conversa.nome && (
+                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>{formatTelefone(conversa.telefone)}</span>
+                      )}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 13, color: 'var(--muted)' }}>{formatPreview(conversa)}</span>
+                        {naoRespondida && (
+                          <span
+                            title={`${conversa.mensagens_pendentes} mensagem(ns) sem resposta`}
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: '#fff',
+                              background: 'var(--danger)',
+                              borderRadius: 999,
+                              padding: '2px 7px',
+                              flexShrink: 0,
+                            }}
+                          >
+                            {conversa.mensagens_pendentes}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {telefoneSelecionado && (
+              <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--line)', borderRadius: 12, minHeight: 360, maxHeight: 480 }}>
+                <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
+                  {(() => {
+                    const nomeContato = conversas.find((c) => c.telefone === telefoneSelecionado)?.nome
+                    return (
+                      <>
+                        <strong>{nomeContato || formatTelefone(telefoneSelecionado)}</strong>
+                        {nomeContato && (
+                          <div style={{ fontSize: 12, color: 'var(--muted)' }}>{formatTelefone(telefoneSelecionado)}</div>
+                        )}
+                      </>
+                    )
+                  })()}
                 </div>
-              ))}
-            </div>
-          )}
+
+                <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'grid', gap: 8, alignContent: 'start' }}>
+                  {mensagensLoading ? (
+                    <p>Carregando mensagens...</p>
+                  ) : mensagens.length === 0 ? (
+                    <p style={{ color: 'var(--muted)' }}>Nenhuma mensagem nesta conversa ainda.</p>
+                  ) : (
+                    mensagens.map((mensagem, indice) => {
+                      const enviadaPorNos = mensagem.direcao === 'SAIDA'
+                      return (
+                        <div
+                          key={mensagem.id ?? indice}
+                          style={{
+                            justifySelf: enviadaPorNos ? 'end' : 'start',
+                            maxWidth: '75%',
+                            background: enviadaPorNos ? 'var(--accent-3)' : 'var(--panel-soft)',
+                            color: 'var(--text)',
+                            border: '1px solid var(--line)',
+                            borderRadius: 12,
+                            padding: '8px 12px',
+                          }}
+                        >
+                          <div style={{ fontSize: 14, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            {formatConteudoMensagem(mensagem)}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'right', marginTop: 2 }}>
+                            {formatHora(mensagem.dt_mensagem)}
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                  <div ref={mensagensFimRef} />
+                </div>
+
+                {erroEnvio && (
+                  <p style={{ color: 'var(--danger)', fontSize: 13, padding: '0 14px' }}>{erroEnvio}</p>
+                )}
+
+                <form
+                  onSubmit={handleEnviarMensagem}
+                  style={{ display: 'flex', gap: 8, padding: 12, borderTop: '1px solid var(--line)' }}
+                >
+                  <input
+                    type="text"
+                    value={textoEnvio}
+                    onChange={(event) => setTextoEnvio(event.target.value)}
+                    placeholder="Escreva uma mensagem"
+                    disabled={enviando}
+                    style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--line)' }}
+                  />
+                  <button className="btn btn-primary" type="submit" disabled={enviando || !textoEnvio.trim()}>
+                    {enviando ? 'Enviando...' : 'Enviar'}
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
         </article>
       </div>
     </section>

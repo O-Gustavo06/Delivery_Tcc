@@ -691,6 +691,42 @@ export default function App() {
     return response.json()
   }, [getAuthToken])
 
+  const fetchWhatsappMensagens = useCallback(
+    async (telefone) => {
+      const token = await getAuthToken()
+      if (!token) return null
+
+      const response = await fetch(`${API_BASE}/admin/whatsapp/conversas/${telefone}/mensagens`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!response.ok) return null
+
+      return response.json()
+    },
+    [getAuthToken],
+  )
+
+  const enviarWhatsappMensagem = useCallback(
+    async (telefone, mensagem) => {
+      const token = await getAuthToken()
+      if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+      const response = await fetch(`${API_BASE}/admin/whatsapp/conversas/${telefone}/mensagens`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mensagem }),
+      })
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}))
+        return { ok: false, message: errorPayload.message || 'Falha ao enviar mensagem.' }
+      }
+
+      return { ok: true, message: '', data: await response.json() }
+    },
+    [getAuthToken],
+  )
+
   const fetchProdutos = useCallback(async () => {
     const token = await getAuthToken()
     if (!token) return null
@@ -1514,6 +1550,8 @@ export default function App() {
               onDesconectar={desconectarWhatsapp}
               onReconectar={reconectarWhatsapp}
               onFetchConversas={fetchWhatsappConversas}
+              onFetchMensagens={fetchWhatsappMensagens}
+              onEnviarMensagem={enviarWhatsappMensagem}
             />
           )}
 
