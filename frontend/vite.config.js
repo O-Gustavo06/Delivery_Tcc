@@ -6,6 +6,7 @@ import path from 'node:path'
 const certPath = path.resolve(__dirname, '../.tools/dev-cert.pem')
 const keyPath = path.resolve(__dirname, '../.tools/dev-key.pem')
 const hasCerts = fs.existsSync(certPath) && fs.existsSync(keyPath)
+const useHttps = process.env.VITE_USE_HTTPS === 'true'
 
 export default defineConfig({
   plugins: [react()],
@@ -13,7 +14,8 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     strictPort: true,
-    https: hasCerts
+    allowedHosts: ['laconical-unslammed-myesha.ngrok-free.dev'],
+    https: hasCerts && useHttps
       ? { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) }
       : undefined,
     proxy: {
@@ -25,7 +27,8 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     strictPort: true,
-    https: hasCerts
+    allowedHosts: ['laconical-unslammed-myesha.ngrok-free.dev'],
+    https: hasCerts && useHttps
       ? { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) }
       : undefined,
     proxy: {

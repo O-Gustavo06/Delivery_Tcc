@@ -23,9 +23,12 @@
   --danger: #d32f4a;
   --glow: rgba(234, 29, 44, 0.16);
 
-  --shadow: 0 24px 48px -30px rgba(22, 23, 28, 0.16);
-  --shadow-soft: 0 10px 24px -18px rgba(22, 23, 28, 0.1);
+  --shadow: 0 1px 3px rgba(22, 23, 28, 0.08);
+  --shadow-soft: 0 1px 2px rgba(22, 23, 28, 0.05);
   --panel-translucent: rgba(255, 255, 255, 0.88);
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 10px;
 
   --font-sans: 'Plus Jakarta Sans', sans-serif;
   --font-display: 'Plus Jakarta Sans', sans-serif;
@@ -53,8 +56,8 @@
   --danger: #f4495f;
   --glow: rgba(255, 77, 94, 0.22);
 
-  --shadow: 0 24px 48px -30px rgba(0, 0, 0, 0.65);
-  --shadow-soft: 0 10px 24px -18px rgba(0, 0, 0, 0.55);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.3);
   --panel-translucent: rgba(26, 27, 34, 0.88);
 }
 
@@ -109,38 +112,11 @@
 body {
   margin: 0;
   font-family: var(--font-sans);
-  background:
-    radial-gradient(circle at top left, rgba(234, 29, 44, 0.05), transparent 26%),
-    radial-gradient(circle at top right, rgba(234, 29, 44, 0.04), transparent 24%),
-    var(--bg);
+  background: var(--bg);
   color: var(--text);
   min-height: 100vh;
   position: relative;
   overflow-x: hidden;
-}
-
-body::before,
-body::after {
-  content: '';
-  position: fixed;
-  width: 320px;
-  height: 320px;
-  border-radius: 50%;
-  filter: blur(12px);
-  z-index: 0;
-  pointer-events: none;
-}
-
-body::before {
-  top: -120px;
-  right: -80px;
-  background: radial-gradient(circle, rgba(234, 29, 44, 0.08) 0%, rgba(234, 29, 44, 0) 70%);
-}
-
-body::after {
-  bottom: -160px;
-  left: -110px;
-  background: radial-gradient(circle, rgba(37, 99, 235, 0.05) 0%, rgba(37, 99, 235, 0) 70%);
 }
 
 #app {
@@ -157,15 +133,15 @@ body::after {
 }
 
 .sidebar {
-  background: linear-gradient(180deg, var(--sidebar), var(--sidebar-2));
+  background: var(--sidebar);
   color: var(--text);
   padding: 24px;
   display: flex;
   flex-direction: column;
   gap: 24px;
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
   min-height: 100vh;
-  border-radius: 28px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--line);
   position: sticky;
   top: 18px;
@@ -194,7 +170,7 @@ body::after {
 .brand-icon {
   width: 42px;
   height: 42px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: var(--accent);
   display: grid;
   place-items: center;
@@ -202,7 +178,6 @@ body::after {
   font-size: 18px;
   font-weight: 800;
   color: #fff;
-  box-shadow: 0 12px 20px -14px rgba(234, 29, 44, 0.55);
 }
 
 .brand-logo {
@@ -241,7 +216,7 @@ body::after {
   border: none;
   color: #52535e;
   padding: 10px 16px 10px 13px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   text-align: left;
   font-size: 14px;
   font-weight: 600;
@@ -283,7 +258,7 @@ body::after {
   flex-shrink: 0;
   width: 28px;
   height: 28px;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
   font-family: var(--font-mono);
@@ -314,7 +289,7 @@ body::after {
   align-items: center;
   gap: 10px;
   padding: 8px;
-  border-radius: 16px;
+  border-radius: var(--radius);
   background: var(--card-bg-2);
   border: 1px solid var(--line);
 }
@@ -323,13 +298,13 @@ body::after {
   flex-shrink: 0;
   width: 36px;
   height: 36px;
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
   font-family: var(--font-mono);
   font-size: 12.5px;
   font-weight: 700;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  background: var(--accent);
   color: #fff;
 }
 
@@ -357,7 +332,7 @@ body::after {
   flex-shrink: 0;
   width: 30px;
   height: 30px;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   border: none;
   background: transparent;
   color: var(--muted);
@@ -393,12 +368,12 @@ body::after {
 
 .topbar {
   background: var(--panel);
-  border-radius: 24px;
+  border-radius: var(--radius-lg);
   padding: 20px 26px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
   border: 1px solid var(--line);
 }
 
@@ -408,10 +383,7 @@ body::after {
   font-size: 24px;
   font-weight: 800;
   letter-spacing: -0.01em;
-  background: linear-gradient(135deg, var(--text), var(--accent));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--text);
 }
 
 .topbar p {
@@ -452,7 +424,7 @@ body::after {
 
 .topbar-date {
   padding: 10px 14px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: var(--panel-soft);
   border: 1px solid var(--line);
   font-size: 12.5px;
@@ -466,7 +438,7 @@ body::after {
   background: var(--panel-soft);
   border: 1px solid var(--line);
   padding: 10px 16px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   font-size: 13.5px;
   color: var(--text);
   font-family: var(--font-sans);
@@ -487,9 +459,9 @@ body::after {
 
 .card {
   background: var(--card-bg);
-  border-radius: 22px;
+  border-radius: var(--radius);
   padding: 16px 18px;
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
   border: 1px solid var(--line);
   position: relative;
   overflow: hidden;
@@ -503,26 +475,18 @@ body::after {
   overflow: hidden;
 }
 
-.metric.card::before {
-  display: block;
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 2px;
-  background: linear-gradient(90deg, var(--accent), transparent 75%);
-  opacity: 0;
-  transition: opacity 0.24s ease;
-}
-
-.metric.card:hover::before {
-  opacity: 0.9;
-}
-
 .metric {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.metric > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
 }
 
 .metric.card,
@@ -541,7 +505,7 @@ body::after {
 .tab,
 .btn,
 .card {
-  transition: transform 0.24s ease, box-shadow 0.24s ease, border-color 0.24s ease, background 0.24s ease;
+  transition: border-color 0.2s ease, background 0.2s ease;
 }
 
 .metric.card:hover,
@@ -550,14 +514,15 @@ body::after {
 .table-card:hover,
 .ticket-card:hover,
 .info-tile:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--shadow);
   border-color: rgba(234, 29, 44, 0.22);
 }
 
 .metric span {
   color: var(--muted);
   font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .metric strong {
@@ -566,24 +531,21 @@ body::after {
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .metric-icon {
   width: 44px;
   height: 44px;
   flex-shrink: 0;
-  border-radius: 14px;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   font-weight: 700;
   font-size: 13px;
   font-family: var(--font-mono);
-  box-shadow: 0 8px 16px -12px rgba(22, 23, 28, 0.25);
-  transition: transform 0.24s ease;
-}
-
-.metric.card:hover .metric-icon {
-  transform: scale(1.06) rotate(-3deg);
 }
 
 .filters {
@@ -608,7 +570,7 @@ body::after {
 .filter-group select,
 .filter-group textarea {
   padding: 11px 14px;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   font-size: 14.5px;
   background: var(--panel-soft);
@@ -622,7 +584,7 @@ body::after {
 .route-select:focus {
   outline: none;
   border-color: rgba(234, 29, 44, 0.5);
-  box-shadow: 0 0 0 4px var(--glow);
+  box-shadow: 0 0 0 2px var(--glow);
 }
 
 .filter-actions {
@@ -641,10 +603,10 @@ body::after {
   background: var(--panel-soft);
   color: var(--text);
   padding: 9px 16px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   font-size: 13.5px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
 .tab.active {
@@ -652,7 +614,6 @@ body::after {
   border-color: rgba(234, 29, 44, 0.35);
   color: var(--accent-2);
   font-weight: 600;
-  box-shadow: 0 10px 20px -18px rgba(234, 29, 44, 0.5);
 }
 
 .orders {
@@ -666,11 +627,11 @@ body::after {
   position: relative;
   background-color: var(--card-bg);
   padding-top: 18px;
-  border-radius: 22px;
+  border-radius: var(--radius);
   padding-left: 18px;
   padding-right: 18px;
   padding-bottom: 16px;
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
   border: 1px solid var(--line);
 }
 
@@ -743,23 +704,28 @@ body::after {
 }
 
 .btn {
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   padding: 10px 18px;
-  border: none;
+  border: 1px solid transparent;
   font-size: 12.5px;
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  font-weight: 700;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  font-weight: 600;
 }
 
 .btn:hover {
-  transform: translateY(-2px);
+  filter: brightness(0.97);
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  background: var(--accent);
   color: #fff;
-  box-shadow: 0 14px 24px -16px rgba(234, 29, 44, 0.45);
+  border-color: var(--accent);
+}
+
+.btn-primary:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
 }
 
 .btn-light {
@@ -793,8 +759,8 @@ body::after {
 }
 
 .badge {
-  padding: 5px 10px;
-  border-radius: 999px;
+  padding: 4px 9px;
+  border-radius: var(--radius-sm);
   font-size: 11.5px;
   font-weight: 700;
   text-transform: uppercase;
@@ -905,23 +871,13 @@ body::after {
 .login-hero {
   position: relative;
   overflow: hidden;
-  border-radius: 32px;
+  border-radius: var(--radius-lg);
   padding: 48px;
-  background:
-    radial-gradient(circle at top right, rgba(255, 255, 255, 0.16), transparent 30%),
-    linear-gradient(160deg, #ff3b30 0%, var(--accent) 45%, var(--accent-2) 100%);
-  box-shadow: var(--shadow);
+  background: var(--accent);
+  box-shadow: none;
   color: #fff;
   display: flex;
   align-items: flex-end;
-}
-
-.login-hero::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at 20% 18%, rgba(255, 255, 255, 0.14), transparent 22%);
-  pointer-events: none;
 }
 
 .login-hero-content {
@@ -933,79 +889,78 @@ body::after {
 }
 
 .login-hero-logo {
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
-  border-radius: 22px;
-  padding: 14px;
-  background: rgba(255, 255, 255, 0.16);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.25);
 }
 
 .login-hero h1 {
   margin: 0;
   font-family: var(--font-display);
-  font-weight: 800;
-  font-size: clamp(40px, 5vw, 68px);
-  line-height: 0.96;
-  letter-spacing: -0.03em;
+  font-weight: 700;
+  font-size: clamp(30px, 3.4vw, 42px);
+  line-height: 1.08;
+  letter-spacing: -0.01em;
   color: #fff;
 }
 
 .login-hero p {
   margin: 0;
   max-width: 48ch;
-  font-size: 17px;
-  line-height: 1.65;
-  color: rgba(255, 255, 255, 0.88);
+  font-size: 15px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.85);
 }
 
 .login-hero-line {
-  width: 88px;
-  height: 4px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #fff, rgba(255, 255, 255, 0.3));
+  width: 56px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.6);
 }
 
 .login-benefits {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  gap: 12px;
   margin-top: 10px;
 }
 
 .login-benefit {
   display: grid;
-  gap: 10px;
-  padding: 18px;
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  backdrop-filter: blur(14px);
+  gap: 8px;
+  padding: 16px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .login-benefit strong {
   display: block;
-  margin-bottom: 6px;
-  font-size: 15px;
+  margin-bottom: 4px;
+  font-size: 14px;
   color: #fff;
 }
 
 .login-benefit span {
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.5;
   color: rgba(255, 255, 255, 0.8);
 }
 
 .benefit-icon {
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.22);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.2);
   color: #fff;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .login-panel {
@@ -1017,16 +972,16 @@ body::after {
   display: grid;
   gap: 22px;
   padding: 32px;
-  border-radius: 32px;
+  border-radius: var(--radius-lg);
   background: var(--panel);
   border: 1px solid var(--line);
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
 }
 
 .login-security-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 18px;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   color: var(--accent-2);
@@ -1096,7 +1051,7 @@ body::after {
 
 .login-demo-box {
   padding: 14px 16px;
-  border-radius: 16px;
+  border-radius: var(--radius-sm);
   background: var(--panel-soft);
   border: 1px solid var(--line);
   font-size: 13px;
@@ -1161,7 +1116,7 @@ body::after {
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   background: var(--card-bg);
   border: 1px solid var(--line);
   font-size: 13.5px;
@@ -1213,19 +1168,10 @@ body::after {
   gap: 16px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 22px;
+  border-radius: var(--radius);
   padding: 18px;
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
   overflow: hidden;
-}
-
-.section-card::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 2px;
-  background: linear-gradient(90deg, var(--accent), transparent 75%);
-  opacity: 0.8;
 }
 
 .section-head {
@@ -1271,7 +1217,7 @@ body::after {
   display: grid;
   gap: 8px;
   padding: 16px;
-  border-radius: 16px;
+  border-radius: var(--radius-sm);
   background: var(--card-bg);
   border: 1px solid var(--line);
 }
@@ -1303,7 +1249,7 @@ body::after {
   align-items: center;
   padding: 13px 14px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   background: var(--card-bg);
   font-size: 13.5px;
 }
@@ -1329,7 +1275,7 @@ body::after {
 
 .notice {
   padding: 14px 16px;
-  border-radius: 16px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--card-bg);
 }
@@ -1398,7 +1344,7 @@ body::after {
   justify-content: space-between;
   align-items: center;
   padding: 10px 12px;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   background: var(--panel);
   border: 1px solid var(--line);
   color: var(--text);
@@ -1413,7 +1359,7 @@ body::after {
   display: grid;
   gap: 8px;
   padding: 14px;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--card-bg);
 }
@@ -1440,7 +1386,7 @@ body::after {
   display: grid;
   gap: 8px;
   padding: 16px;
-  border-radius: 18px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--card-bg);
 }
@@ -1511,7 +1457,7 @@ body::after {
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--card-bg);
   font-size: 13.5px;
@@ -2211,6 +2157,49 @@ body::after {
   width: 100%;
 }
 
+.menu-pagamento-online {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.menu-pagamento-online h3 {
+  margin: 0;
+  color: var(--text);
+}
+
+.menu-pagamento-online img {
+  display: block;
+  width: min(220px, 100%);
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: contain;
+}
+
+.menu-pagamento-online textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 76px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--delivery-line);
+  border-radius: 12px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font: 12px/1.45 var(--font-mono);
+  resize: vertical;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.menu-pagamento-online .menu-finalizar-pro {
+  width: 100%;
+  margin: 0;
+}
+
 .menu-vazio-pro,
 .menu-rodape-publico {
   padding: 20px;
@@ -2301,16 +2290,16 @@ body::after {
 
 .modal-panel {
   background: var(--panel);
-  border-radius: 28px;
+  border-radius: var(--radius);
   border: 1px solid var(--line);
-  box-shadow: var(--shadow);
-  max-width: 640px;
+  box-shadow: 0 4px 16px rgba(22, 23, 28, 0.18);
+  max-width: 580px;
   width: 100%;
   max-height: 90vh;
   overflow-y: auto;
-  padding: 28px;
+  padding: 24px;
   display: grid;
-  gap: 18px;
+  gap: 16px;
 }
 
 .modal-head {

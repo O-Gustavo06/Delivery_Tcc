@@ -12,11 +12,14 @@ use App\Models\Pagamento;
 use App\Models\Pedido;
 use App\Models\Produto;
 use App\Models\PushSubscription;
+use App\Models\TransacaoPagamento;
 use App\Models\User;
 use App\Http\Controllers\Api\Mesa\MesaSessionController;
 use App\Services\GeocodingService;
 use App\Services\TaxaEntregaService;
+use App\Services\AsaasService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -31,6 +34,7 @@ class PedidoOnlineController extends Controller
     private const FRONT_TO_DB_PAYMENT = [
         'pix' => 'PIX',
         'cartao' => 'CARTAO',
+        'cartao_online' => 'CARTAO',
         'dinheiro' => 'DINHEIRO',
     ];
 
@@ -107,7 +111,10 @@ class PedidoOnlineController extends Controller
             'cidade' => ['nullable', 'string', 'max:100'],
             'uf' => ['nullable', 'string', 'max:2'],
             'endereco' => ['required_if:tipo_entrega,delivery', 'nullable', 'string', 'max:255'],
-            'payment_method' => ['required', 'string', 'in:pix,cartao,dinheiro'],
+            'payment_method' => ['required', 'string', 'in:pix,cartao,cartao_online,dinheiro'],
+            'cpf_cnpj' => ['required_if:payment_method,pix,cartao_online', 'nullable', 'string', 'max:18'],
+            'email' => ['nullable', 'email', 'max:150'],
+            'numero' => ['nullable', 'string', 'max:20'],
             'change_for' => ['nullable', 'numeric', 'min:0'],
             'note' => ['nullable', 'string', 'max:500'],
             'items' => ['required', 'array', 'min:1'],
@@ -237,6 +244,19 @@ class PedidoOnlineController extends Controller
             return $pedido;
         });
 
+        try {
+            $paymentPayload = $this->createGatewayPayment($pedido, $data);
+        } catch (RequestException $exception) {
+            Pagamento::where('id_pedido', $pedido->id_pedido)->update(['status' => 'CANCELADO']);
+            $description = data_get($exception->response?->json(), 'errors.0.description');
+
+            return response()->json([
+                'message' => $description ?: 'Nao foi possivel iniciar o pagamento online. Tente outra forma de pagamento.',
+                'codigo_qr' => $pedido->codigo_qr,
+                'number' => $pedido->id_pedido,
+            ], 422);
+        }
+
         return response()->json([
             'codigo_qr' => $pedido->codigo_qr,
             'number' => $pedido->id_pedido,
@@ -244,7 +264,56 @@ class PedidoOnlineController extends Controller
             'tipo_entrega' => $isRetirada ? 'retirada' : 'delivery',
             'total' => (float) $pedido->vl_total,
             'status' => self::DB_TO_FRONT_STATUS[$pedido->status] ?? 'aguardando_confirmacao',
+            'payment' => $paymentPayload,
         ], 201);
+    }
+
+    private function createGatewayPayment(Pedido $pedido, array $data): ?array
+    {
+        $formaPagamento = self::FRONT_TO_DB_PAYMENT[$data['payment_method']];
+        if (!in_array($data['payment_method'], ['pix', 'cartao_online'], true) || !app(AsaasService::class)->enabled()) {
+            return null;
+        }
+
+        $pagamento = Pagamento::where('id_pedido', $pedido->id_pedido)->firstOrFail();
+        $valor = round((float) $pedido->vl_total + (float) $pedido->vl_taxa_entrega, 2);
+        $asaas = app(AsaasService::class);
+        $customer = $asaas->createCustomer(
+            $data['nome'],
+            $data['telefone'],
+            $data['cpf_cnpj'],
+            $data['email'] ?? null,
+            $data['rua'] ?? $data['endereco'] ?? null,
+            $data['numero'] ?? null,
+            $data['cep'] ?? null,
+            $data['cidade'] ?? null,
+            $data['uf'] ?? null,
+            "cliente:{$pedido->id_cliente}",
+        );
+        $reference = "pedido:{$pedido->id_pedido}";
+        $description = "Pedido #{$pedido->id_pedido} - Restaurante Modelo";
+        $gatewayPayment = $data['payment_method'] === 'pix'
+            ? $asaas->createPixPayment($customer['id'], $valor, $reference, $description)
+            : $asaas->createCardCheckout($customer['id'], $valor, $reference, $description);
+        $pix = $formaPagamento === 'PIX' ? $asaas->getPixQrCode($gatewayPayment['id']) : [];
+
+        TransacaoPagamento::create([
+            'id_pagamento' => $pagamento->id_pagamento,
+            'provedor' => 'ASAAS',
+            'nsu' => $gatewayPayment['id'],
+            'status' => 'PENDENTE',
+            'payload_json' => ['payment' => $gatewayPayment, 'pix' => $pix],
+        ]);
+
+        return [
+            'method' => strtolower($formaPagamento),
+            'status' => 'PENDENTE',
+            'pix' => $formaPagamento === 'PIX' ? [
+                'encoded_image' => $pix['encodedImage'] ?? null,
+                'payload' => $pix['payload'] ?? null,
+            ] : null,
+            'checkout_url' => $formaPagamento === 'CARTAO' ? ($gatewayPayment['link'] ?? null) : null,
+        ];
     }
 
     /**
@@ -286,12 +355,36 @@ class PedidoOnlineController extends Controller
             'status' => self::DB_TO_FRONT_STATUS[$pedido->status] ?? 'aguardando_confirmacao',
             'motivo_cancelamento' => $pedido->motivo_cancelamento,
             'total' => (float) $pedido->vl_total,
+            'payment' => $this->paymentPayload($pedido),
             'entregador_nome' => $pedido->entrega?->entregador?->usuario?->nm_usuario,
             'avaliacao' => $pedido->avaliacao ? [
                 'nota' => $pedido->avaliacao->nota,
                 'comentario' => $pedido->avaliacao->ds_comentario,
             ] : null,
         ]);
+    }
+
+    private function paymentPayload(Pedido $pedido): ?array
+    {
+        $pagamento = $pedido->pagamento()->with('transacoes')->first();
+        $transacao = $pagamento?->transacoes->where('provedor', 'ASAAS')->sortByDesc('id_transacao')->first();
+        $gateway = $transacao?->payload_json ?? [];
+        $pix = $gateway['pix'] ?? [];
+        $payment = $gateway['payment'] ?? [];
+
+        if (!$pagamento) {
+            return null;
+        }
+
+        return [
+            'method' => strtolower($pagamento->forma),
+            'status' => $pagamento->status,
+            'pix' => $pagamento->forma === 'PIX' ? [
+                'encoded_image' => $pix['encodedImage'] ?? null,
+                'payload' => $pix['payload'] ?? null,
+            ] : null,
+            'checkout_url' => $pagamento->forma === 'CARTAO' ? ($payment['link'] ?? null) : null,
+        ];
     }
 
     /**

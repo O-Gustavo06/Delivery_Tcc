@@ -8,6 +8,90 @@ const DRAFT_KEY = 'pedido_online_dados'
 const TAXA_ENTREGA_FALLBACK = 8
 const PEDIDO_MINIMO = 20
 
+
+/*
+ * Checkout mais simples:
+ * - sem cartões visuais entre cada etapa;
+ * - separação feita por espaçamento e divisores;
+ * - foco no fluxo do pedido.
+ */
+const CHECKOUT_STYLE = `
+.menu-checkout-simples {
+  background: var(--surface, #fff);
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.menu-checkout-simples .checkout-secao {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.menu-checkout-simples .checkout-secao + .checkout-secao {
+  border-top: 1px solid var(--border, #e5e7eb);
+  margin-top: 18px;
+  padding-top: 18px;
+}
+
+.menu-checkout-simples .menu-carrinho-item-pro {
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  border-radius: 0;
+  padding: 10px 0;
+}
+
+.menu-checkout-simples .menu-resumo-pro {
+  padding: 14px 0;
+}
+
+.menu-checkout-simples .menu-total-pro {
+  border-top: 1px solid var(--border, #e5e7eb);
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  border-radius: 0;
+  padding: 14px 0;
+  margin-top: 4px;
+}
+
+.menu-checkout-simples .menu-dados-pro {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.menu-checkout-simples .menu-dados-pro h3 {
+  margin-bottom: 12px;
+}
+
+.menu-checkout-simples input,
+.menu-checkout-simples select,
+.menu-checkout-simples textarea {
+  border-radius: 6px;
+}
+
+.menu-checkout-simples .menu-finalizar-pro {
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.menu-checkout-simples .menu-produto-img-pro {
+  border-radius: 6px;
+  background: var(--surface-muted, #f3f4f6);
+}
+
+@media (max-width: 800px) {
+  .menu-checkout-simples {
+    border-radius: 0;
+  }
+
+  .menu-checkout-simples .checkout-secao + .checkout-secao {
+    margin-top: 14px;
+    padding-top: 14px;
+  }
+}
+`
+
+
 function formatarPreco(valor) {
   return Number(valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
@@ -19,26 +103,6 @@ function chaveVapidParaUint8Array(chaveBase64) {
   const base64 = (chaveBase64 + padding).replace(/-/g, '+').replace(/_/g, '/')
   const raw = window.atob(base64)
   return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)))
-}
-
-// Mesmo tratamento visual da mesa (sem fotos reais cadastradas): icone + gradiente por produto.
-const VISUAIS_PRODUTO = [
-  { termos: ['pizza'], emoji: '🍕', gradiente: 'linear-gradient(135deg, #ff6b57, #ffb347)' },
-  { termos: ['hamburguer', 'hambúrguer', 'burger', 'lanche', 'x-tudo', 'x-salada', 'x-burguer', 'xis', 'x-bacon'], emoji: '🍔', gradiente: 'linear-gradient(135deg, #f7a84b, #e8622c)' },
-  { termos: ['batata'], emoji: '🍟', gradiente: 'linear-gradient(135deg, #ffcf5c, #ffb020)' },
-  { termos: ['suco'], emoji: '🧃', gradiente: 'linear-gradient(135deg, #ff9f43, #ffe08a)' },
-  { termos: ['refrigerante', 'lata', 'refri'], emoji: '🥤', gradiente: 'linear-gradient(135deg, #4fb3e8, #8fd3f4)' },
-  { termos: ['frango'], emoji: '🍗', gradiente: 'linear-gradient(135deg, #e0a13c, #b9752e)' },
-  { termos: ['arroz'], emoji: '🍚', gradiente: 'linear-gradient(135deg, #f4e9d8, #e8d9bd)' },
-  { termos: ['salada', 'verde'], emoji: '🥗', gradiente: 'linear-gradient(135deg, #7bc86c, #4f9d4f)' },
-  { termos: ['sobremesa', 'doce', 'sorvete', 'bolo'], emoji: '🍰', gradiente: 'linear-gradient(135deg, #ff8fa3, #ffc2d1)' },
-  { termos: ['agua', 'água'], emoji: '💧', gradiente: 'linear-gradient(135deg, #6ec3ff, #a8dcff)' },
-]
-
-function getVisualProduto(nome) {
-  const alvo = (nome || '').toLowerCase()
-  const encontrado = VISUAIS_PRODUTO.find((v) => v.termos.some((termo) => alvo.includes(termo)))
-  return encontrado || { emoji: '🍽️', gradiente: 'linear-gradient(135deg, var(--accent), var(--accent-2))' }
 }
 
 function getStatusInfo(status, tipoEntrega) {
@@ -78,6 +142,9 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
   })
   const [tipoEntrega, setTipoEntrega] = useState('delivery')
   const [formaPagamento, setFormaPagamento] = useState('pix')
+  const [cpfCnpj, setCpfCnpj] = useState('')
+  const [email, setEmail] = useState('')
+  const [numero, setNumero] = useState('')
   const [trocoPara, setTrocoPara] = useState('')
   const [observacao, setObservacao] = useState('')
   const [enviando, setEnviando] = useState(false)
@@ -242,6 +309,9 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
         uf: tipoEntrega === 'delivery' ? dados.uf : undefined,
         endereco: tipoEntrega === 'delivery' ? dados.endereco : undefined,
         payment_method: formaPagamento,
+        cpf_cnpj: ['pix', 'cartao_online'].includes(formaPagamento) ? cpfCnpj : undefined,
+        email: formaPagamento === 'cartao_online' ? email : undefined,
+        numero: formaPagamento === 'cartao_online' ? numero : undefined,
         change_for: formaPagamento === 'dinheiro' && trocoPara ? Number(trocoPara) : undefined,
         note: observacao.trim() || undefined,
         items: itensCarrinho.map((item) => ({ id_produto: item.id, qty: item.qty })),
@@ -391,6 +461,32 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
           <p style={{ color: 'var(--text)' }}>
             Total: <strong>{formatarPreco(statusPedido.total)}</strong>
           </p>
+          {statusPedido.payment?.method === 'pix' && statusPedido.payment.pix?.payload && (
+            <div className="menu-pagamento-online">
+              <h3>Pagamento Pix</h3>
+              {statusPedido.payment.pix.encoded_image && (
+                <img
+                  src={`data:image/png;base64,${statusPedido.payment.pix.encoded_image}`}
+                  alt="QR Code para pagamento Pix"
+                  width={220}
+                  height={220}
+                />
+              )}
+              <textarea readOnly value={statusPedido.payment.pix.payload} rows={3} aria-label="Pix copia e cola" />
+              <button
+                className="menu-finalizar-pro"
+                type="button"
+                onClick={() => navigator.clipboard?.writeText(statusPedido.payment.pix.payload)}
+              >
+                Copiar Pix copia e cola
+              </button>
+            </div>
+          )}
+          {statusPedido.payment?.method === 'cartao' && statusPedido.payment.checkout_url && (
+            <a className="menu-finalizar-pro" href={statusPedido.payment.checkout_url} target="_blank" rel="noreferrer">
+              Pagar com cartão
+            </a>
+          )}
           {!finalizado && <p>Essa tela atualiza sozinha conforme o pedido avança.</p>}
           {!finalizado && cardapio?.empresa?.vapid_public_key && statusNotificacao === 'default' && (
             <button className="menu-finalizar-pro" type="button" onClick={ativarNotificacoes} disabled={ativandoNotificacao}>
@@ -459,7 +555,9 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
   const lojaAberta = cardapio?.empresa?.aberto !== false
 
   return (
-    <div className="menu-publico-pro">
+    <>
+      <style>{CHECKOUT_STYLE}</style>
+      <div className="menu-publico-pro">
       <header className="menu-hero-pro">
         <div className="menu-hero-info">
           <span className="menu-tag-pro">Cardápio Online</span>
@@ -533,18 +631,13 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
               </div>
             ) : (
               produtosFiltrados.map((produto) => {
-                const visual = getVisualProduto(produto.nome)
                 return (
                   <article className="menu-produto-pro" key={produto.id}>
                     {produto.imagem ? (
                       <div className="menu-produto-img-pro">
                         <img src={resolveAssetUrl(produto.imagem)} alt={produto.nome} />
                       </div>
-                    ) : (
-                      <div className="menu-produto-img-pro" style={{ background: visual.gradiente }}>
-                        <span style={{ fontSize: 40 }}>{visual.emoji}</span>
-                      </div>
-                    )}
+                    ) : null}
                     <div className="menu-produto-info-pro">
                       <div className="menu-produto-topo">
                         <span>{produto.categoria}</span>
@@ -565,8 +658,8 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
           </div>
         </div>
 
-        <aside className="menu-carrinho-pro" ref={carrinhoRef}>
-          <div className="menu-carrinho-header">
+        <aside className="menu-carrinho-pro menu-checkout-simples" ref={carrinhoRef}>
+          <div className="menu-carrinho-header checkout-secao">
             <h2>Seu pedido</h2>
             <span>{totalItensCarrinho} item(ns)</span>
           </div>
@@ -596,7 +689,7 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
             </div>
           )}
 
-          <div className="menu-resumo-pro">
+          <div className="menu-resumo-pro checkout-secao">
             <div>
               <span>Subtotal</span>
               <strong>{formatarPreco(subtotalCarrinho)}</strong>
@@ -617,7 +710,7 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
             <strong>{formatarPreco(subtotalCarrinho + taxaEntrega)}</strong>
           </div>
 
-          <form className="menu-dados-pro" onSubmit={fazerPedido}>
+          <form className="menu-dados-pro checkout-secao" onSubmit={fazerPedido}>
             <h3>Dados do cliente</h3>
             <input
               type="text"
@@ -657,8 +750,36 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
             <select value={formaPagamento} onChange={(event) => setFormaPagamento(event.target.value)}>
               <option value="pix">Pix</option>
               <option value="cartao">Cartão (na entrega)</option>
+              <option value="cartao_online">Cartão online</option>
               <option value="dinheiro">Dinheiro</option>
             </select>
+            {['pix', 'cartao_online'].includes(formaPagamento) && (
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder="CPF ou CNPJ"
+                value={cpfCnpj}
+                onChange={(event) => setCpfCnpj(event.target.value)}
+                required
+              />
+            )}
+            {formaPagamento === 'cartao_online' && (
+              <>
+                <input
+                  type="email"
+                  placeholder="E-mail para pagamento"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  required
+                />
+                <input
+                  type="text"
+                  placeholder="Número do endereço (opcional)"
+                  value={numero}
+                  onChange={(event) => setNumero(event.target.value)}
+                />
+              </>
+            )}
             {formaPagamento === 'dinheiro' && (
               <input
                 type="number"
@@ -703,6 +824,7 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
           </button>
         </div>
       )}
-    </div>
+      </div>
+    </>
   )
 }

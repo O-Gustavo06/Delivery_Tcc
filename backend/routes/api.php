@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\Motoboy\RotaController;
 use App\Http\Controllers\Api\Motoboy\HistoricoController;
 use App\Http\Controllers\Api\Mesa\MesaSessionController;
 use App\Http\Controllers\Api\Delivery\PedidoOnlineController;
+use App\Http\Controllers\Api\AsaasWebhookController;
 use App\Http\Controllers\Api\Webhook\EvolutionWebhookController;
 use Illuminate\Support\Facades\Route;
 
@@ -106,6 +107,8 @@ Route::prefix('pedir')->group(function () {
     Route::post('status/{codigoQr}/push/inscrever', [PedidoOnlineController::class, 'inscreverPush']);
     Route::get('cliente/{telefone}', [PedidoOnlineController::class, 'clientePorTelefone']);
 });
+
+Route::post('asaas/webhook', [AsaasWebhookController::class, 'handle']);
 
 Route::prefix('motoboy')->middleware(['auth.api', 'role:entregador'])->group(function () {
     Route::get('pedidos/scan/{codigoQr}', [PedidoScanController::class, 'scan']);

@@ -59,4 +59,14 @@ return [
         'webhook_url' => env('EVOLUTION_WEBHOOK_URL'),
     ],
 
+    'asaas' => [
+        'base_url' => env('ASAAS_ENV', 'sandbox') === 'production'
+            ? 'https://api.asaas.com/v3'
+            : 'https://api-sandbox.asaas.com/v3',
+        'api_key' => env('ASAAS_API_KEY'),
+        'webhook_token' => env('ASAAS_WEBHOOK_TOKEN'),
+        'success_url' => env('ASAAS_SUCCESS_URL', env('APP_URL') . '/pagamento/sucesso'),
+        'ca_bundle' => env('ASAAS_CA_BUNDLE'),
+    ],
+
 ];

@@ -2,7 +2,8 @@ import React, { useState } from 'react'
 
 function LinkCardapioOnline() {
   const [status, setStatus] = useState('')
-  const link = `${window.location.origin}/cardapio/pedir`
+  const publicOrigin = import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin
+  const link = `${publicOrigin.replace(/\/$/, '')}/cardapio/pedir`
 
   const copiarLink = async () => {
     try {
