@@ -1,0 +1,16 @@
+{
+  "name": "Chef's Hub",
+  "short_name": "Chef's Hub",
+  "description": "Painel do restaurante, cardapio online e autoatendimento de mesa.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f7fa",
+  "theme_color": "#ea1d2c",
+  "icons": [
+    { "src": "/favicon.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/favicon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/favicon.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

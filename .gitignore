@@ -1,0 +1,43 @@
+# Local configuration and credentials
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.ppk
+**/certificates/
+**/certs/
+
+# Dependencies and generated frontend/backend files
+node_modules/
+vendor/
+dist/
+build/
+coverage/
+
+# Logs, caches, and local runtime data
+*.log
+**/storage/logs/*
+**/storage/framework/*
+**/storage/app/*
+**/.cache/
+.phpunit.result.cache
+
+# Database exports and backups
+**/database/backups/
+*.sql.gz
+*.dump
+*.bak
+
+# Operating system and local tooling files
+Thumbs.db
+.DS_Store
+.tools/
+.claude/
