@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react'
+import './Painel.css'
 
 const formatMoney = (value) =>
   value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -19,126 +20,134 @@ export default function Painel({ orders, users, panelData, tablesData }) {
   }, [orders, tablesData.summary.occupied, users.length])
 
   return (
-    <>
-      <section className="cards">
-        <div className="card metric fade-in" style={{ '--i': 0 }}>
-          <div>
-            <span>Faturamento do turno</span>
-            <strong>{formatMoney(stats.revenue)}</strong>
-          </div>
-          <div className="metric-icon badge-green">R$</div>
+    <div className="dashboard-page">
+      <section className="dashboard-stats" aria-label="Resumo do turno">
+        <div className="dashboard-stat">
+          <span>Faturamento do turno</span>
+          <strong>{formatMoney(stats.revenue)}</strong>
         </div>
-        <div className="card metric fade-in" style={{ '--i': 1 }}>
-          <div>
-            <span>Ticket medio</span>
-            <strong>{formatMoney(stats.averageTicket)}</strong>
-          </div>
-          <div className="metric-icon badge-blue">TM</div>
+        <div className="dashboard-stat">
+          <span>Ticket médio</span>
+          <strong>{formatMoney(stats.averageTicket)}</strong>
         </div>
-        <div className="card metric fade-in" style={{ '--i': 2 }}>
-          <div>
-            <span>Mesas ocupadas</span>
-            <strong>{stats.occupiedTables}</strong>
-          </div>
-          <div className="metric-icon badge-orange">MS</div>
+        <div className="dashboard-stat">
+          <span>Mesas ocupadas</span>
+          <strong>{stats.occupiedTables}</strong>
         </div>
-        <div className="card metric fade-in" style={{ '--i': 3 }}>
-          <div>
-            <span>Entregas em rota</span>
-            <strong>{stats.activeDeliveries}</strong>
-          </div>
-          <div className="metric-icon badge-lime">RT</div>
+        <div className="dashboard-stat">
+          <span>Entregas em rota</span>
+          <strong>{stats.activeDeliveries}</strong>
         </div>
       </section>
 
-      <section className="page-grid page-grid-2-1">
-        <div className="page-stack">
-          <article className="card section-card fade-in" style={{ '--i': 4 }}>
-            <div className="section-head">
+      <div className="dashboard-grid">
+        <div className="dashboard-primary">
+          <section className="dashboard-section" aria-labelledby="dashboard-channels-title">
+            <div className="dashboard-section-head">
               <div>
-                <h2>Visao por canal</h2>
-                <p>Distribuicao de pedidos e receita por origem.</p>
+                <h2 id="dashboard-channels-title">Visão por canal</h2>
+                <p>Pedidos e receita por origem</p>
               </div>
-              <span className="badge badge-muted">Atualizado agora</span>
+              <span className="dashboard-updated">Atualizado agora</span>
             </div>
-            <div className="mini-grid">
-              {panelData.channels.map((channel) => (
-                <div className="info-tile" key={channel.id}>
-                  <span>{channel.label}</span>
-                  <strong>{channel.orders} pedidos</strong>
-                  <p>{formatMoney(channel.revenue)}</p>
-                  <span className="trend positive">{channel.delta}</span>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="card section-card fade-in" style={{ '--i': 5 }}>
-            <div className="section-head">
-              <div>
-                <h2>Radar operacional</h2>
-                <p>Pedidos recentes com foco em execucao e fluxo.</p>
-              </div>
-              <span className="section-note">Equipe online: {stats.activeUsers}</span>
-            </div>
-            <div className="data-table">
-              <div className="data-row row-head" style={{ gridTemplateColumns: '0.8fr 1.2fr 1fr 0.8fr' }}>
-                <span>Pedido</span>
-                <span>Cliente</span>
-                <span>Status</span>
-                <span>Total</span>
-              </div>
-              {orders.map((order) => (
-                <div className="data-row" key={order.id} style={{ gridTemplateColumns: '0.8fr 1.2fr 1fr 0.8fr' }}>
-                  <strong>#{order.number}</strong>
-                  <span>{order.customerName}</span>
-                  <span className="badge badge-light">{order.status.replaceAll('_', ' ')}</span>
-                  <span>{formatMoney(order.total)}</span>
-                </div>
-              ))}
-            </div>
-          </article>
-        </div>
-
-        <div className="page-stack">
-          <article className="card section-card fade-in" style={{ '--i': 6 }}>
-            <div className="section-head">
-              <div>
-                <h2>Alertas</h2>
-                <p>Pontos que exigem acao da gerencia.</p>
-              </div>
-            </div>
-            <div className="notice-list">
-              {panelData.alerts.map((alert) => (
-                <div className={`notice notice-${alert.tone}`} key={alert.id}>
-                  <strong>{alert.title}</strong>
-                  <p>{alert.description}</p>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="card section-card fade-in" style={{ '--i': 7 }}>
-            <div className="section-head">
-              <div>
-                <h2>Linha do tempo</h2>
-                <p>Eventos importantes da operacao durante o dia.</p>
-              </div>
-            </div>
-            <div className="timeline-list">
-              {panelData.timeline.map((event) => (
-                <div className="timeline-item" key={`${event.time}-${event.title}`}>
-                  <span className="timeline-time">{event.time}</span>
-                  <div>
-                    <strong>{event.title}</strong>
-                    <p>{event.detail}</p>
+            {panelData.channels.length > 0 ? (
+              <div className="dashboard-channels">
+                {panelData.channels.map((channel) => (
+                  <div className="dashboard-channel" key={channel.id}>
+                    <span className="dashboard-channel-name">{channel.label}</span>
+                    <strong>{channel.orders} pedidos</strong>
+                    <div className="dashboard-channel-details">
+                      <span>{formatMoney(channel.revenue)}</span>
+                      <span className="dashboard-trend">{channel.delta}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
+            ) : (
+              <p className="dashboard-empty">Ainda não há dados por canal.</p>
+            )}
+          </section>
+
+          <section className="dashboard-section" aria-labelledby="dashboard-orders-title">
+            <div className="dashboard-section-head">
+              <div>
+                <h2 id="dashboard-orders-title">Radar operacional</h2>
+                <p>Pedidos recentes e andamento da operação</p>
+              </div>
+              <span className="dashboard-updated">Equipe online: {stats.activeUsers}</span>
             </div>
-          </article>
+            <div className="dashboard-orders" role="table" aria-label="Pedidos recentes">
+              <div className="dashboard-order dashboard-order-head" role="row">
+                <span role="columnheader">Pedido</span>
+                <span role="columnheader">Cliente</span>
+                <span role="columnheader">Status</span>
+                <span role="columnheader">Total</span>
+              </div>
+              {orders.length > 0 ? (
+                orders.map((order) => (
+                  <div className="dashboard-order" key={order.id} role="row">
+                    <strong role="cell">#{order.number}</strong>
+                    <span role="cell">{order.customerName}</span>
+                    <span className="dashboard-status" data-status={order.status} role="cell">
+                      {order.status.replaceAll('_', ' ')}
+                    </span>
+                    <span role="cell">{formatMoney(order.total)}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="dashboard-empty">Nenhum pedido recente.</p>
+              )}
+            </div>
+          </section>
         </div>
-      </section>
-    </>
+
+        <aside className="dashboard-aside">
+          <section className="dashboard-section" aria-labelledby="dashboard-alerts-title">
+            <div className="dashboard-section-head">
+              <div>
+                <h2 id="dashboard-alerts-title">Alertas</h2>
+                <p>Pontos que exigem atenção</p>
+              </div>
+            </div>
+            {panelData.alerts.length > 0 ? (
+              <div className="dashboard-notices">
+                {panelData.alerts.map((alert) => (
+                  <div className="dashboard-notice" data-tone={alert.tone} key={alert.id}>
+                    <strong>{alert.title}</strong>
+                    <p>{alert.description}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="dashboard-empty">Nenhum alerta no momento.</p>
+            )}
+          </section>
+
+          <section className="dashboard-section" aria-labelledby="dashboard-timeline-title">
+            <div className="dashboard-section-head">
+              <div>
+                <h2 id="dashboard-timeline-title">Linha do tempo</h2>
+                <p>Atividade recente</p>
+              </div>
+            </div>
+            {panelData.timeline.length > 0 ? (
+              <div className="dashboard-timeline">
+                {panelData.timeline.map((event) => (
+                  <div className="dashboard-timeline-event" key={`${event.time}-${event.title}`}>
+                    <time>{event.time}</time>
+                    <div>
+                      <strong>{event.title}</strong>
+                      <p>{event.detail}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="dashboard-empty">Nenhuma atividade recente.</p>
+            )}
+          </section>
+        </aside>
+      </div>
+    </div>
   )
 }

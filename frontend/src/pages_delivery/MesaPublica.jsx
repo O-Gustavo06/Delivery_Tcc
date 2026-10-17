@@ -97,8 +97,25 @@ export default function MesaPublica({ theme, onToggleTheme }) {
   const [erroIdentificacao, setErroIdentificacao] = useState('')
   const [identificando, setIdentificando] = useState(false)
 
-  const [aba, setAba] = useState('cardapio')
-  const [carrinho, setCarrinho] = useState({})
+  // Carrinho fica no localStorage (mesma chave do /presencial/<token>): o que o cliente
+  // escolheu no cardapio com video ja chega aqui em "Meu pedido", e sobrevive a um F5.
+  const carrinhoKey = `mesa_carrinho_${token}`
+  const [carrinho, setCarrinho] = useState(() => {
+    try {
+      return JSON.parse(window.localStorage.getItem(carrinhoKey)) || {}
+    } catch {
+      return {}
+    }
+  })
+  const [aba, setAba] = useState(() => (Object.keys(carrinho).length > 0 ? 'pedido' : 'cardapio'))
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(carrinhoKey, JSON.stringify(carrinho))
+    } catch {
+      // sem localStorage: carrinho so vive enquanto a tela estiver aberta, como antes
+    }
+  }, [carrinho, carrinhoKey])
   const [enviandoPedido, setEnviandoPedido] = useState(false)
   const [formaPagamento, setFormaPagamento] = useState('pix')
   const [fechando, setFechando] = useState(false)
@@ -453,6 +470,9 @@ export default function MesaPublica({ theme, onToggleTheme }) {
             <div className="mp-section-title">
               <h2>Cardápio</h2>
               <p>Toque em + pra adicionar</p>
+              <a href={`/presencial/${token}`} className="mp-link-presencial">
+                Ver cardápio com fotos e vídeos →
+              </a>
             </div>
 
             <div className="mp-product-list">

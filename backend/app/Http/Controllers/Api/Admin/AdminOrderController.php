@@ -42,6 +42,7 @@ class AdminOrderController extends Controller
         'IFOOD' => 'ifood',
         '99FOOD' => '99food',
         'ONLINE' => 'online',
+        'PRESENCIAL' => 'presencial',
     ];
 
     /** Canais externos: a gente nao tem integracao real com a API deles,
@@ -476,8 +477,15 @@ class AdminOrderController extends Controller
         return $this->updateStatus($request, $orderId);
     }
 
+    /** Por quanto tempo o card destaca "novos itens" depois de uma rodada nova na mesa. */
+    private const MINUTOS_DESTAQUE_ACRESCIMO = 10;
+
     private function toPayload(Pedido $order): array
     {
+        $ultimoAcrescimo = $order->dt_ultimo_acrescimo;
+        $temNovos = $ultimoAcrescimo !== null
+            && $ultimoAcrescimo->gt(now()->subMinutes(self::MINUTOS_DESTAQUE_ACRESCIMO));
+
         return [
             'id' => $order->id_pedido,
             'number' => $order->id_pedido,
@@ -502,7 +510,13 @@ class AdminOrderController extends Controller
                 'qty' => (int) $item->nr_quantidade,
                 'price' => (float) $item->vl_preco_unitario,
                 'note' => $item->adicionais_json['observacao'] ?? null,
+                'ordered_by' => $item->adicionais_json['cliente'] ?? null,
+                // Item da ultima rodada (margem de 5s: a rodada grava os itens antes de marcar o pedido).
+                'is_new' => $temNovos && $item->dt_cadastro && $item->dt_cadastro->gte($ultimoAcrescimo->copy()->subSeconds(5)),
             ])->values()->all(),
+            'additions' => (int) $order->nr_acrescimos,
+            'last_added_at' => optional($ultimoAcrescimo)->format('H:i'),
+            'has_new_items' => $temNovos,
             'created_at' => optional($order->dt_pedido)->format('Y-m-d H:i:s'),
             'avaliacao' => $order->avaliacao ? [
                 'nota' => $order->avaliacao->nota,

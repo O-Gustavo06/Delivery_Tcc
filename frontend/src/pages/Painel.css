@@ -1,0 +1,345 @@
+.topbar.topbar-dashboard {
+  padding: 8px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.dashboard-page {
+  display: grid;
+  gap: 30px;
+  color: var(--text);
+}
+
+.dashboard-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dashboard-stat {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 20px;
+  border-right: 1px solid var(--line);
+}
+
+.dashboard-stat:first-child {
+  padding-left: 0;
+}
+
+.dashboard-stat:last-child {
+  border-right: 0;
+}
+
+.dashboard-stat span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dashboard-stat strong {
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: clamp(18px, 1.7vw, 23px);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(270px, 0.9fr);
+  align-items: start;
+  gap: 38px;
+}
+
+.dashboard-primary,
+.dashboard-aside {
+  display: grid;
+  align-content: start;
+  gap: 32px;
+  min-width: 0;
+}
+
+.dashboard-section {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dashboard-section:last-child {
+  border-bottom: 0;
+}
+
+.dashboard-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.dashboard-section-head h2 {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.dashboard-section-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dashboard-updated {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dashboard-channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+}
+
+.dashboard-channel {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 18px;
+  border-right: 1px solid var(--line);
+}
+
+.dashboard-channel:first-child {
+  padding-left: 0;
+}
+
+.dashboard-channel:last-child {
+  border-right: 0;
+}
+
+.dashboard-channel-name,
+.dashboard-channel-details {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.dashboard-channel > strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.dashboard-channel-details {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dashboard-trend {
+  color: var(--success);
+}
+
+.dashboard-orders {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.dashboard-order {
+  display: grid;
+  grid-template-columns: 0.7fr 1.15fr 1fr 0.8fr;
+  align-items: center;
+  gap: 12px;
+  min-width: 540px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.dashboard-order:last-child {
+  border-bottom: 0;
+}
+
+.dashboard-order-head {
+  padding: 0 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dashboard-order > strong,
+.dashboard-order > span:last-child {
+  font-family: var(--font-mono);
+}
+
+.dashboard-order > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  text-transform: capitalize;
+}
+
+.dashboard-status::before {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  content: '';
+}
+
+.dashboard-status[data-status='novo']::before,
+.dashboard-status[data-status='cancelado']::before,
+.dashboard-status[data-status='recusado']::before {
+  background: var(--danger);
+}
+
+.dashboard-status[data-status='enviado_cozinha']::before,
+.dashboard-status[data-status='em_preparo']::before {
+  background: var(--warning);
+}
+
+.dashboard-status[data-status='pronto']::before,
+.dashboard-status[data-status='entregue']::before {
+  background: var(--success);
+}
+
+.dashboard-status[data-status='saiu_entrega']::before {
+  background: var(--info);
+}
+
+.dashboard-notices,
+.dashboard-timeline {
+  display: grid;
+}
+
+.dashboard-notice {
+  padding: 13px 0 13px 14px;
+  border-left: 2px solid var(--line);
+}
+
+.dashboard-notice + .dashboard-notice {
+  border-top: 1px solid var(--line);
+}
+
+.dashboard-notice[data-tone='danger'],
+.dashboard-notice[data-tone='warning'] {
+  border-left-color: var(--danger);
+}
+
+.dashboard-notice[data-tone='info'] {
+  border-left-color: var(--info);
+}
+
+.dashboard-notice[data-tone='success'] {
+  border-left-color: var(--success);
+}
+
+.dashboard-notice strong,
+.dashboard-timeline-event strong {
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.dashboard-notice p,
+.dashboard-timeline-event p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.dashboard-timeline-event {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.dashboard-timeline-event:last-child {
+  border-bottom: 0;
+}
+
+.dashboard-timeline-event time {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.dashboard-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (max-width: 1080px) {
+  .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+  }
+
+  .dashboard-aside {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 28px;
+  }
+}
+
+@media (max-width: 700px) {
+  .topbar.topbar-dashboard {
+    padding-top: 0;
+  }
+
+  .dashboard-page {
+    gap: 24px;
+  }
+
+  .dashboard-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 18px;
+  }
+
+  .dashboard-stat {
+    padding: 0 14px;
+  }
+
+  .dashboard-stat:nth-child(odd) {
+    padding-left: 0;
+    border-right: 1px solid var(--line);
+  }
+
+  .dashboard-stat:nth-child(even) {
+    border-right: 0;
+  }
+
+  .dashboard-aside {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard-channel {
+    padding: 12px 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .dashboard-channel:last-child {
+    border-bottom: 0;
+  }
+}

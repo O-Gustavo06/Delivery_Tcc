@@ -4,9 +4,11 @@
   "version": "0.0.1",
   "description": "Sobe backend (Docker) + painel admin + app do motoboy com um comando so.",
   "scripts": {
-    "dev": "npm run docker:up && npx concurrently -k -n frontend,motoboy -c cyan,magenta \"npm --prefix frontend run dev\" \"npm --prefix motoboy run dev\"",
+    "dev": "npm run docker:up && npm --prefix frontend run dev",
     "pwa": "npm run docker:up && npm run build:all && npx concurrently -k -n frontend,motoboy -c cyan,magenta \"npm --prefix frontend run preview\" \"npm --prefix motoboy run preview\"",
     "build:all": "npm --prefix frontend run build && npm --prefix motoboy run build",
+    "dev:online": "npm run docker:up && npx concurrently -k -n sistema,ngrok -c cyan,yellow \"npm --prefix frontend run dev\" \"npm run tunnel\"",
+    "tunnel": "ngrok http --url=laconical-unslammed-myesha.ngrok-free.dev 127.0.0.1:5173",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "install:all": "npm --prefix frontend install && npm --prefix motoboy install"

@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\Motoboy\RotaController;
 use App\Http\Controllers\Api\Motoboy\HistoricoController;
 use App\Http\Controllers\Api\Mesa\MesaSessionController;
 use App\Http\Controllers\Api\Delivery\PedidoOnlineController;
+use App\Http\Controllers\Api\Presencial\PedidoPresencialController;
 use App\Http\Controllers\Api\AsaasWebhookController;
 use App\Http\Controllers\Api\Webhook\EvolutionWebhookController;
 use Illuminate\Support\Facades\Route;
@@ -94,6 +95,7 @@ Route::prefix('admin')->middleware(['auth.api', 'role:admin'])->group(function (
 
 Route::prefix('mesa')->group(function () {
     Route::get('{token}', [MesaSessionController::class, 'show']);
+    Route::post('{token}/ocupar', [MesaSessionController::class, 'ocupar']);
     Route::post('{token}/identificar', [MesaSessionController::class, 'identificar']);
     Route::post('{token}/pedidos', [MesaSessionController::class, 'pedido']);
     Route::post('{token}/fechar', [MesaSessionController::class, 'fechar']);
@@ -107,6 +109,8 @@ Route::prefix('pedir')->group(function () {
     Route::post('status/{codigoQr}/push/inscrever', [PedidoOnlineController::class, 'inscreverPush']);
     Route::get('cliente/{telefone}', [PedidoOnlineController::class, 'clientePorTelefone']);
 });
+
+Route::post('presencial/pedidos', [PedidoPresencialController::class, 'store']);
 
 Route::post('asaas/webhook', [AsaasWebhookController::class, 'handle']);
 

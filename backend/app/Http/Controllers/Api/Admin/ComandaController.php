@@ -90,7 +90,7 @@ class ComandaController extends Controller
             'mesa' => $comanda->mesa->nr_mesa,
             'status' => $comanda->status,
             'forma_pagamento' => $comanda->forma_pagamento,
-            'total' => (float) $comanda->pedidos->sum('vl_total'),
+            'total' => $comanda->total,
             'aberta_desde' => optional($comanda->dt_cadastro)->toIso8601String(),
             'pedidos' => $comanda->pedidos->map(fn ($pedido) => [
                 'id_pedido' => $pedido->id_pedido,

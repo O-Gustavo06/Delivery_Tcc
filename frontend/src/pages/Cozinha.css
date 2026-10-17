@@ -1,0 +1,234 @@
+.kitchen-page {
+  display: grid;
+  gap: 24px;
+}
+
+.kitchen-stations {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.kitchen-station-note {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.kitchen-station-note > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.kitchen-note-label {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kitchen-station-time {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.kitchen-station-meta {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
+}
+
+.kitchen-workflow,
+.kitchen-mise {
+  display: grid;
+  gap: 14px;
+}
+
+.kitchen-workflow {
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.kitchen-section-head h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 19px;
+}
+
+.kitchen-section-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.kitchen-page .kanban-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.kitchen-page .kanban-column {
+  min-width: 0;
+  gap: 10px;
+}
+
+.kitchen-page .kanban-head {
+  padding: 0 0 9px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.kitchen-page .kanban-head span {
+  display: inline-grid;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--card-bg-2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.kitchen-page .kanban-stack {
+  gap: 8px;
+}
+
+.kitchen-page .ticket-card {
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.kitchen-page .ticket-card[data-status='novo'] {
+  border-left-color: var(--accent);
+}
+
+.kitchen-page .ticket-card[data-status='enviado_cozinha'] {
+  border-left-color: var(--info);
+}
+
+.kitchen-page .ticket-card[data-status='em_preparo'] {
+  border-left-color: var(--warning);
+}
+
+.kitchen-page .ticket-card[data-status='pronto'] {
+  border-left-color: var(--success);
+}
+
+.kitchen-page .ticket-card-has-new {
+  border-color: rgba(234, 29, 44, 0.55);
+  background: var(--accent-3);
+}
+
+.kitchen-page .ticket-head strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.kitchen-page .ticket-head span {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.kitchen-page .ticket-card p {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.kitchen-page .ticket-card ul {
+  display: grid;
+  gap: 4px;
+  padding-left: 16px;
+}
+
+.kitchen-page .ticket-card li {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.kitchen-prep-notes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.kitchen-prep-note {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+}
+
+.kitchen-prep-note-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.kitchen-prep-note h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.kitchen-prep-note-head span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.kitchen-prep-note p,
+.kitchen-empty-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1000px) {
+  .kitchen-page .kanban-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .kitchen-page .kanban-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .kitchen-station-meta {
+    display: flex;
+    justify-content: space-between;
+    text-align: left;
+  }
+}

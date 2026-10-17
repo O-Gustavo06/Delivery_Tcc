@@ -19,9 +19,13 @@ use App\Services\GeocodingService;
 use App\Services\TaxaEntregaService;
 use App\Services\AsaasService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -122,6 +126,21 @@ class PedidoOnlineController extends Controller
             'items.*.qty' => ['required', 'integer', 'min:1'],
         ]);
 
+        $idempotencyKey = $request->header('Idempotency-Key');
+        if ($idempotencyKey !== null && !Str::isUuid($idempotencyKey)) {
+            return response()->json([
+                'message' => 'A chave de idempotência é inválida.',
+                'errors' => ['Idempotency-Key' => ['Informe um UUID válido.']],
+            ], 422);
+        }
+
+        if ($idempotencyKey) {
+            $existingOrder = Pedido::where('idempotency_key', $idempotencyKey)->first();
+            if ($existingOrder) {
+                return $this->respondForOrder($existingOrder, $data, true);
+            }
+        }
+
         $isRetirada = $data['tipo_entrega'] === 'retirada';
 
         $empresa = Empresa::orderBy('id_empresa')->first();
@@ -139,6 +158,13 @@ class PedidoOnlineController extends Controller
             ->get()
             ->keyBy('id_produto');
 
+        $requestedProductIds = collect($data['items'])->pluck('id_produto')->unique();
+        if ($produtos->count() !== $requestedProductIds->count()) {
+            return response()->json([
+                'message' => 'Um ou mais produtos não estão disponíveis para pedido.',
+            ], 422);
+        }
+
         // Retirada no balcao nao tem endereco pra geocodificar - poupa a chamada de rede.
         $coordenadas = $isRetirada ? [] : app(GeocodingService::class)->coordenadasPorEndereco(
             $data['rua'] ?? null,
@@ -149,170 +175,313 @@ class PedidoOnlineController extends Controller
 
         $taxaEntrega = $isRetirada ? 0 : app(TaxaEntregaService::class)->calcular($coordenadas['lat'] ?? null, $coordenadas['lng'] ?? null);
 
-        $pedido = DB::transaction(function () use ($data, $empresa, $produtos, $coordenadas, $isRetirada, $taxaEntrega) {
-            $cliente = Cliente::with('usuario')->where('telefone', $data['telefone'])->first();
+        try {
+            $pedido = DB::transaction(function () use ($data, $empresa, $produtos, $coordenadas, $isRetirada, $taxaEntrega, $idempotencyKey) {
+                $cliente = Cliente::with('usuario')->where('telefone', $data['telefone'])->first();
 
-            if (!$cliente) {
-                $emailSintetico = strtolower(preg_replace('/\s+/', '.', trim($data['nome'])))
-                    . '+' . now()->timestamp . '@cliente.local';
+                if (!$cliente) {
+                    $emailSintetico = strtolower(preg_replace('/\s+/', '.', trim($data['nome'])))
+                        . '+' . now()->timestamp . '@cliente.local';
 
-                $usuario = User::create([
-                    'nm_usuario' => $data['nome'],
-                    'email' => $emailSintetico,
-                    'senha_hash' => bcrypt(Str::random(40)),
-                    'perfil' => 'CLIENTE',
-                    'fl_ativo' => true,
-                ]);
+                    $usuario = User::create([
+                        'nm_usuario' => $data['nome'],
+                        'email' => $emailSintetico,
+                        'senha_hash' => bcrypt(Str::random(40)),
+                        'perfil' => 'CLIENTE',
+                        'fl_ativo' => true,
+                    ]);
 
-                $cliente = Cliente::create([
-                    'id_usuario' => $usuario->id_usuario,
-                    'telefone' => $data['telefone'],
-                ])->load('usuario');
-            }
+                    $cliente = Cliente::create([
+                        'id_usuario' => $usuario->id_usuario,
+                        'telefone' => $data['telefone'],
+                    ])->load('usuario');
+                }
 
-            $total = 0;
-            foreach ($data['items'] as $item) {
-                $produto = $produtos->get($item['id_produto']);
-                if ($produto) {
+                $total = 0;
+                foreach ($data['items'] as $item) {
+                    $produto = $produtos->get($item['id_produto']);
                     $total += (float) $produto->vl_preco_base * $item['qty'];
                 }
-            }
 
-            // Numeracao propria do delivery, comecando do 1 - mesma regra do pedido criado
-            // pelo admin (AdminOrderController::store), pra nao duplicar numero entre os dois
-            // canais. Retirada no balcao nao entra nessa numeracao (so existe pra motoboy).
-            $nrPedidoDelivery = null;
-            if (!$isRetirada) {
-                $nrPedidoDelivery = 1 + (int) DB::table('pedido')
-                    ->where('tipo_pedido', 'DELIVERY')
-                    ->lockForUpdate()
-                    ->max('nr_pedido_delivery');
-            }
-
-            $pedido = Pedido::create([
-                'id_empresa' => $empresa->id_empresa,
-                'id_cliente' => $cliente->id_cliente,
-                'codigo_qr' => (string) Str::uuid(),
-                'tipo_pedido' => $isRetirada ? 'BALCAO' : 'DELIVERY',
-                'nr_pedido_delivery' => $nrPedidoDelivery,
-                'canal_origem' => 'ONLINE',
-                'status' => 'PENDENTE',
-                'vl_total' => round($total, 2),
-                'vl_taxa_entrega' => $taxaEntrega,
-                'ds_observacao' => $isRetirada ? null : $data['endereco'],
-                'ds_nota_pedido' => !empty($data['note']) ? mb_strtoupper($data['note']) : null,
-            ]);
-
-            foreach ($data['items'] as $item) {
-                $produto = $produtos->get($item['id_produto']);
-                if (!$produto) {
-                    continue;
+                $nrPedidoDelivery = null;
+                if (!$isRetirada) {
+                    $nrPedidoDelivery = 1 + (int) DB::table('pedido')
+                        ->where('tipo_pedido', 'DELIVERY')
+                        ->lockForUpdate()
+                        ->max('nr_pedido_delivery');
                 }
 
-                ItemPedido::create([
-                    'id_pedido' => $pedido->id_pedido,
-                    'id_produto' => $produto->id_produto,
-                    'nr_quantidade' => $item['qty'],
-                    'vl_preco_unitario' => $produto->vl_preco_base,
-                    'vl_subtotal' => round((float) $produto->vl_preco_base * $item['qty'], 2),
+                $pedido = Pedido::create([
+                    'id_empresa' => $empresa->id_empresa,
+                    'id_cliente' => $cliente->id_cliente,
+                    'codigo_qr' => (string) Str::uuid(),
+                    'idempotency_key' => $idempotencyKey,
+                    'tipo_pedido' => $isRetirada ? 'BALCAO' : 'DELIVERY',
+                    'nr_pedido_delivery' => $nrPedidoDelivery,
+                    'canal_origem' => 'ONLINE',
+                    'status' => 'PENDENTE',
+                    'vl_total' => round($total, 2),
+                    'vl_taxa_entrega' => $taxaEntrega,
+                    'ds_observacao' => $isRetirada ? null : $data['endereco'],
+                    'ds_nota_pedido' => !empty($data['note']) ? mb_strtoupper($data['note']) : null,
                 ]);
+
+                foreach ($data['items'] as $item) {
+                    $produto = $produtos->get($item['id_produto']);
+
+                    ItemPedido::create([
+                        'id_pedido' => $pedido->id_pedido,
+                        'id_produto' => $produto->id_produto,
+                        'nr_quantidade' => $item['qty'],
+                        'vl_preco_unitario' => $produto->vl_preco_base,
+                        'vl_subtotal' => round((float) $produto->vl_preco_base * $item['qty'], 2),
+                    ]);
+                }
+
+                $formaPagamento = self::FRONT_TO_DB_PAYMENT[$data['payment_method']];
+                $totalFinal = round($total + $taxaEntrega, 2);
+
+                Pagamento::create([
+                    'id_pedido' => $pedido->id_pedido,
+                    'forma' => $formaPagamento,
+                    'troco_para' => $formaPagamento === 'DINHEIRO' ? ($data['change_for'] ?? null) : null,
+                    'status' => 'PENDENTE',
+                    'vl_total' => $totalFinal,
+                    'vl_desconto' => 0,
+                    'vl_final' => $totalFinal,
+                ]);
+
+                if (!$isRetirada) {
+                    Entrega::create([
+                        'id_pedido' => $pedido->id_pedido,
+                        'status_entrega' => 'AGUARDANDO',
+                        'latitude_destino' => $coordenadas['lat'] ?? null,
+                        'longitude_destino' => $coordenadas['lng'] ?? null,
+                    ]);
+                }
+
+                return $pedido;
+            });
+        } catch (QueryException $exception) {
+            if (!$idempotencyKey || !str_contains($exception->getMessage(), 'pedido_idempotency_key_unique')) {
+                throw $exception;
             }
 
-            $formaPagamento = self::FRONT_TO_DB_PAYMENT[$data['payment_method']];
-
-            Pagamento::create([
-                'id_pedido' => $pedido->id_pedido,
-                'forma' => $formaPagamento,
-                'troco_para' => $formaPagamento === 'DINHEIRO' ? ($data['change_for'] ?? null) : null,
-                'status' => 'PENDENTE',
-                'vl_total' => round($total, 2),
-                'vl_desconto' => 0,
-                'vl_final' => round($total, 2),
-            ]);
-
-            // Retirada no balcao nao tem entrega/motoboy - so pedido delivery precisa desse
-            // registro (mesma regra do AdminOrderController::store pra pedido de balcao).
-            if (!$isRetirada) {
-                Entrega::create([
-                    'id_pedido' => $pedido->id_pedido,
-                    'status_entrega' => 'AGUARDANDO',
-                    'latitude_destino' => $coordenadas['lat'] ?? null,
-                    'longitude_destino' => $coordenadas['lng'] ?? null,
-                ]);
+            $existingOrder = Pedido::where('idempotency_key', $idempotencyKey)->first();
+            if (!$existingOrder) {
+                throw $exception;
             }
 
-            return $pedido;
-        });
-
-        try {
-            $paymentPayload = $this->createGatewayPayment($pedido, $data);
-        } catch (RequestException $exception) {
-            Pagamento::where('id_pedido', $pedido->id_pedido)->update(['status' => 'CANCELADO']);
-            $description = data_get($exception->response?->json(), 'errors.0.description');
-
-            return response()->json([
-                'message' => $description ?: 'Nao foi possivel iniciar o pagamento online. Tente outra forma de pagamento.',
-                'codigo_qr' => $pedido->codigo_qr,
-                'number' => $pedido->id_pedido,
-            ], 422);
+            return $this->respondForOrder($existingOrder, $data, true);
         }
 
-        return response()->json([
-            'codigo_qr' => $pedido->codigo_qr,
-            'number' => $pedido->id_pedido,
-            'delivery_number' => $pedido->nr_pedido_delivery,
-            'tipo_entrega' => $isRetirada ? 'retirada' : 'delivery',
-            'total' => (float) $pedido->vl_total,
-            'status' => self::DB_TO_FRONT_STATUS[$pedido->status] ?? 'aguardando_confirmacao',
-            'payment' => $paymentPayload,
-        ], 201);
+        return $this->respondForOrder($pedido, $data, false, 201);
     }
 
-    private function createGatewayPayment(Pedido $pedido, array $data): ?array
+    private function respondForOrder(Pedido $pedido, array $data, bool $recoverExisting, int $successStatus = 200): JsonResponse
     {
-        $formaPagamento = self::FRONT_TO_DB_PAYMENT[$data['payment_method']];
-        if (!in_array($data['payment_method'], ['pix', 'cartao_online'], true) || !app(AsaasService::class)->enabled()) {
+        try {
+            $paymentPayload = $this->gatewayPaymentForOrder($pedido, $data, $recoverExisting);
+        } catch (RequestException $exception) {
+            return $this->handleGatewayRequestException($pedido, $data, $exception);
+        } catch (ConnectionException $exception) {
+            Log::warning('Conexão com o Asaas falhou durante a criação do pagamento.', [
+                'order_id' => $pedido->id_pedido,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return response()->json($this->orderResponse(
+                $pedido,
+                $data,
+                null,
+                'O pedido foi registrado. A confirmação do pagamento está sendo recuperada; mantenha esta tela aberta.',
+            ), 202);
+        }
+
+        $paymentPending = $this->gatewayPaymentExpected($data) && $paymentPayload === null;
+
+        return response()->json($this->orderResponse(
+            $pedido,
+            $data,
+            $paymentPayload,
+            $paymentPending ? 'O pagamento está sendo processado. Mantenha esta tela aberta enquanto recuperamos o QR Code.' : null,
+        ), $paymentPending ? 202 : $successStatus);
+    }
+
+    private function gatewayPaymentForOrder(Pedido $pedido, array $data, bool $recoverExisting): ?array
+    {
+        if (!$this->gatewayPaymentExpected($data)) {
             return null;
         }
 
+        $lock = Cache::lock('asaas:pedido:' . $pedido->id_pedido, 60);
+        if (!$lock->get()) {
+            return null;
+        }
+
+        try {
+            $pagamento = Pagamento::with('transacoes')
+                ->where('id_pedido', $pedido->id_pedido)
+                ->firstOrFail();
+
+            if ($pagamento->status !== 'PENDENTE') {
+                return $this->paymentPayload($pedido->fresh());
+            }
+
+            return $this->createGatewayPayment($pedido, $data, $recoverExisting, $pagamento);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function gatewayPaymentExpected(array $data): bool
+    {
+        return in_array($data['payment_method'], ['pix', 'cartao_online'], true)
+            && app(AsaasService::class)->enabled();
+    }
+
+    private function createGatewayPayment(
+        Pedido $pedido,
+        array $data,
+        bool $recoverExisting,
+        Pagamento $pagamento,
+    ): ?array {
+        $formaPagamento = self::FRONT_TO_DB_PAYMENT[$data['payment_method']];
         $pagamento = Pagamento::where('id_pedido', $pedido->id_pedido)->firstOrFail();
         $valor = round((float) $pedido->vl_total + (float) $pedido->vl_taxa_entrega, 2);
         $asaas = app(AsaasService::class);
-        $customer = $asaas->createCustomer(
-            $data['nome'],
-            $data['telefone'],
-            $data['cpf_cnpj'],
-            $data['email'] ?? null,
-            $data['rua'] ?? $data['endereco'] ?? null,
-            $data['numero'] ?? null,
-            $data['cep'] ?? null,
-            $data['cidade'] ?? null,
-            $data['uf'] ?? null,
-            "cliente:{$pedido->id_cliente}",
-        );
         $reference = "pedido:{$pedido->id_pedido}";
         $description = "Pedido #{$pedido->id_pedido} - Restaurante Modelo";
-        $gatewayPayment = $data['payment_method'] === 'pix'
-            ? $asaas->createPixPayment($customer['id'], $valor, $reference, $description)
-            : $asaas->createCardCheckout($customer['id'], $valor, $reference, $description);
-        $pix = $formaPagamento === 'PIX' ? $asaas->getPixQrCode($gatewayPayment['id']) : [];
+        $transacao = $pagamento->transacoes()
+            ->where('provedor', 'ASAAS')
+            ->orderByDesc('id_transacao')
+            ->first();
+        $gatewayPayment = data_get($transacao?->payload_json, 'payment');
 
-        TransacaoPagamento::create([
-            'id_pagamento' => $pagamento->id_pagamento,
-            'provedor' => 'ASAAS',
-            'nsu' => $gatewayPayment['id'],
-            'status' => 'PENDENTE',
-            'payload_json' => ['payment' => $gatewayPayment, 'pix' => $pix],
-        ]);
+        if (!$gatewayPayment && $recoverExisting && $formaPagamento === 'PIX') {
+            $gatewayPayment = $asaas->findPaymentByExternalReference($reference);
+            if (in_array($gatewayPayment['status'] ?? null, ['OVERDUE', 'DELETED', 'REFUNDED'], true)) {
+                $gatewayPayment = null;
+            }
+        }
+
+        if (!$gatewayPayment) {
+            if ($recoverExisting && $formaPagamento === 'CARTAO') {
+                return null;
+            }
+
+            $customer = $asaas->createCustomer(
+                $data['nome'],
+                $data['telefone'],
+                $data['cpf_cnpj'],
+                $data['email'] ?? null,
+                $data['rua'] ?? $data['endereco'] ?? null,
+                $data['numero'] ?? null,
+                $data['cep'] ?? null,
+                $data['cidade'] ?? null,
+                $data['uf'] ?? null,
+                "cliente:{$pedido->id_cliente}",
+            );
+            $gatewayPayment = $data['payment_method'] === 'pix'
+                ? $asaas->createPixPayment($customer['id'], $valor, $reference, $description)
+                : $asaas->createCardCheckout($customer['id'], $valor, $reference, $description);
+        }
+
+        if (empty($gatewayPayment['id'])) {
+            throw new \UnexpectedValueException('O Asaas não retornou um identificador para o pagamento.');
+        }
+
+        $gatewayPayload = $transacao?->payload_json ?? [];
+        $gatewayPayload['payment'] = $gatewayPayment;
+        $transacao = TransacaoPagamento::updateOrCreate(
+            ['provedor' => 'ASAAS', 'nsu' => $gatewayPayment['id']],
+            [
+                'id_pagamento' => $pagamento->id_pagamento,
+                'payload_json' => $gatewayPayload,
+            ],
+        );
+
+        $pix = $gatewayPayload['pix'] ?? [];
+        if ($formaPagamento === 'PIX' && empty($pix['payload'])) {
+            $pix = $asaas->getPixQrCode($gatewayPayment['id']);
+            $gatewayPayload['pix'] = $pix;
+            $transacao->update(['payload_json' => $gatewayPayload]);
+        }
 
         return [
             'method' => strtolower($formaPagamento),
-            'status' => 'PENDENTE',
+            'status' => $pagamento->fresh()->status,
             'pix' => $formaPagamento === 'PIX' ? [
                 'encoded_image' => $pix['encodedImage'] ?? null,
                 'payload' => $pix['payload'] ?? null,
+                'expiration_date' => $pix['expirationDate'] ?? null,
             ] : null,
             'checkout_url' => $formaPagamento === 'CARTAO' ? ($gatewayPayment['link'] ?? null) : null,
+        ];
+    }
+
+    private function handleGatewayRequestException(Pedido $pedido, array $data, RequestException $exception): JsonResponse
+    {
+        $httpStatus = $exception->response?->status();
+        $paymentHasTransaction = $pedido->pagamento()
+            ->whereHas('transacoes', fn ($query) => $query->where('provedor', 'ASAAS'))
+            ->exists();
+
+        if ($httpStatus >= 400 && $httpStatus < 500 && $httpStatus !== 429 && !$paymentHasTransaction) {
+            DB::transaction(function () use ($pedido) {
+                $lockedOrder = Pedido::whereKey($pedido->id_pedido)->lockForUpdate()->firstOrFail();
+                $lockedPayment = Pagamento::where('id_pedido', $pedido->id_pedido)->lockForUpdate()->first();
+
+                if ($lockedOrder->status === 'PENDENTE') {
+                    $lockedOrder->update([
+                        'status' => 'CANCELADO',
+                        'motivo_cancelamento' => 'O pagamento online foi recusado pelo provedor.',
+                        'dt_conclusao' => now(),
+                    ]);
+                }
+
+                if ($lockedPayment?->status === 'PENDENTE') {
+                    $lockedPayment->update(['status' => 'RECUSADO']);
+                }
+            });
+
+            return response()->json([
+                'message' => data_get($exception->response?->json(), 'errors.0.description')
+                    ?: 'O provedor recusou a criação do pagamento. Confira os dados e tente novamente.',
+            ], 422);
+        }
+
+        Log::warning('O Asaas não confirmou a criação do pagamento; o pedido foi mantido para reconciliação.', [
+            'order_id' => $pedido->id_pedido,
+            'http_status' => $httpStatus,
+            'error' => $exception->getMessage(),
+        ]);
+
+        return response()->json($this->orderResponse(
+            $pedido,
+            $data,
+            null,
+            'O pedido foi registrado. A confirmação do pagamento está sendo recuperada; mantenha esta tela aberta.',
+        ), 202);
+    }
+
+    private function orderResponse(
+        Pedido $pedido,
+        array $data,
+        ?array $paymentPayload = null,
+        ?string $paymentMessage = null,
+    ): array
+    {
+        return [
+            'codigo_qr' => $pedido->codigo_qr,
+            'number' => $pedido->id_pedido,
+            'delivery_number' => $pedido->nr_pedido_delivery,
+            'tipo_entrega' => $pedido->tipo_pedido === 'BALCAO' ? 'retirada' : 'delivery',
+            'subtotal' => (float) $pedido->vl_total,
+            'total' => round((float) $pedido->vl_total + (float) $pedido->vl_taxa_entrega, 2),
+            'status' => self::DB_TO_FRONT_STATUS[$pedido->status] ?? 'aguardando_confirmacao',
+            'payment' => $paymentPayload ?? ($this->gatewayPaymentExpected($data) ? $this->paymentPayload($pedido) : null),
+            'payment_message' => $paymentMessage,
         ];
     }
 
@@ -337,9 +506,13 @@ class PedidoOnlineController extends Controller
      * GET /pedir/status/{codigoQr}
      * O cliente acompanha o pedido por aqui (poll), sem precisar de login.
      */
-    public function status(string $codigoQr): JsonResponse
+    public function status(Request $request, string $codigoQr): JsonResponse
     {
-        $pedido = Pedido::with(['entrega.entregador.usuario', 'avaliacao'])
+        $pedido = Pedido::with([
+            'entrega.entregador.usuario',
+            'avaliacao',
+            'pagamento.transacoes' => fn ($query) => $query->where('provedor', 'ASAAS'),
+        ])
             ->where('codigo_qr', $codigoQr)
             ->where('canal_origem', 'ONLINE')
             ->first();
@@ -354,8 +527,9 @@ class PedidoOnlineController extends Controller
             'tipo_entrega' => $pedido->tipo_pedido === 'BALCAO' ? 'retirada' : 'delivery',
             'status' => self::DB_TO_FRONT_STATUS[$pedido->status] ?? 'aguardando_confirmacao',
             'motivo_cancelamento' => $pedido->motivo_cancelamento,
-            'total' => (float) $pedido->vl_total,
-            'payment' => $this->paymentPayload($pedido),
+            'subtotal' => (float) $pedido->vl_total,
+            'total' => round((float) $pedido->vl_total + (float) $pedido->vl_taxa_entrega, 2),
+            'payment' => $this->paymentPayload($pedido, $request->boolean('include_pix_data', true)),
             'entregador_nome' => $pedido->entrega?->entregador?->usuario?->nm_usuario,
             'avaliacao' => $pedido->avaliacao ? [
                 'nota' => $pedido->avaliacao->nota,
@@ -364,10 +538,15 @@ class PedidoOnlineController extends Controller
         ]);
     }
 
-    private function paymentPayload(Pedido $pedido): ?array
+    private function paymentPayload(Pedido $pedido, bool $includePixData = true): ?array
     {
-        $pagamento = $pedido->pagamento()->with('transacoes')->first();
-        $transacao = $pagamento?->transacoes->where('provedor', 'ASAAS')->sortByDesc('id_transacao')->first();
+        $pagamento = $pedido->relationLoaded('pagamento')
+            ? $pedido->pagamento
+            : $pedido->pagamento()->with('transacoes')->first();
+        $transacoes = $pagamento?->relationLoaded('transacoes')
+            ? $pagamento->transacoes
+            : $pagamento?->transacoes()->where('provedor', 'ASAAS')->get();
+        $transacao = $transacoes?->where('provedor', 'ASAAS')->sortByDesc('id_transacao')->first();
         $gateway = $transacao?->payload_json ?? [];
         $pix = $gateway['pix'] ?? [];
         $payment = $gateway['payment'] ?? [];
@@ -380,8 +559,9 @@ class PedidoOnlineController extends Controller
             'method' => strtolower($pagamento->forma),
             'status' => $pagamento->status,
             'pix' => $pagamento->forma === 'PIX' ? [
-                'encoded_image' => $pix['encodedImage'] ?? null,
-                'payload' => $pix['payload'] ?? null,
+                'encoded_image' => $includePixData ? ($pix['encodedImage'] ?? null) : null,
+                'payload' => $includePixData ? ($pix['payload'] ?? null) : null,
+                'expiration_date' => $includePixData ? ($pix['expirationDate'] ?? null) : null,
             ] : null,
             'checkout_url' => $pagamento->forma === 'CARTAO' ? ($payment['link'] ?? null) : null,
         ];

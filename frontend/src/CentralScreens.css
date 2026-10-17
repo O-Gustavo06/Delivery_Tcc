@@ -1,0 +1,170 @@
+.app-shell .app-main > .topbar.topbar-flat {
+  padding: 8px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.app-shell .page > .cards {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.app-shell .page > .cards > .metric.card {
+  min-width: 0;
+  padding: 2px 18px;
+  overflow: visible;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell .page > .cards > .metric.card:first-child {
+  padding-left: 0;
+}
+
+.app-shell .page > .cards > .metric.card:last-child {
+  border-right: 0;
+}
+
+.app-shell .page > .cards > .metric.card:hover {
+  border-color: var(--line);
+}
+
+.app-shell .page > .cards > .metric .metric-icon {
+  display: none;
+}
+
+.app-shell .page-grid {
+  gap: 24px 30px;
+}
+
+.app-shell .page-grid-2-1 {
+  grid-template-columns: minmax(0, 1.9fr) minmax(280px, 1fr);
+}
+
+.app-shell .page .section-card,
+.app-shell .page > .users-card {
+  padding: 18px 0;
+  overflow: visible;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell .page .section-card:hover {
+  border-color: var(--line);
+}
+
+.app-shell .page .section-head h2 {
+  font-size: 18px;
+}
+
+.app-shell .page .mini-grid {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0 20px;
+}
+
+.app-shell .page .info-tile {
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell .page .info-tile:hover {
+  border-color: var(--line);
+}
+
+.app-shell .page .table-grid {
+  gap: 0 20px;
+}
+
+.app-shell .page .table-grid > .table-card {
+  padding: 14px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell .page .table-card.table-occupied {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+}
+
+.app-shell .page .table-card.table-reserved {
+  border-left: 3px solid var(--info);
+  padding-left: 12px;
+}
+
+.app-shell .page .table-card.table-free {
+  border-left: 3px solid var(--success);
+  padding-left: 12px;
+}
+
+.app-shell .page .table-card.table-cleaning {
+  border-left: 3px solid var(--muted);
+  padding-left: 12px;
+}
+
+.app-shell .page .table-card:hover {
+  border-color: var(--line);
+}
+
+.app-shell .page .ticket-card {
+  padding: 14px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell .page .check-item {
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+@media (max-width: 1000px) {
+  .app-shell .page > .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 16px;
+  }
+
+  .app-shell .page > .cards > .metric.card:nth-child(odd) {
+    padding-left: 0;
+    border-right: 1px solid var(--line);
+  }
+
+  .app-shell .page > .cards > .metric.card:nth-child(even) {
+    border-right: 0;
+  }
+
+  .app-shell .page-grid-2-1 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .app-shell .app-main > .topbar.topbar-flat {
+    padding-top: 0;
+  }
+
+  .app-shell .page > .cards > .metric.card {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .app-shell .page-grid {
+    gap: 18px;
+  }
+}

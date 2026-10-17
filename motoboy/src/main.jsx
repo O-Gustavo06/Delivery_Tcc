@@ -20,7 +20,7 @@ if ('serviceWorker' in navigator) {
     // So registra em build de producao: em dev ele faz cache-first de tudo e passa a
     // servir versoes velhas dos arquivos, brigando com o hot-reload do Vite.
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').catch(() => {})
+      navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {})
     })
   } else {
     // Auto-limpeza pra quem visitou o app em dev antes dessa guarda existir e ficou com

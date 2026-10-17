@@ -3,7 +3,10 @@
 namespace App\Services;
 
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
+use LogicException;
 
 class AsaasService
 {
@@ -20,7 +23,8 @@ class AsaasService
                 'User-Agent' => 'RestauranteTcc/1.0',
             ])
             ->acceptJson()
-            ->timeout(20);
+            ->connectTimeout(3)
+            ->timeout(8);
 
         $caBundle = config('services.asaas.ca_bundle');
         if ($caBundle) {
@@ -68,7 +72,24 @@ class AsaasService
 
     public function getPixQrCode(string $paymentId): array
     {
-        return $this->request()->get("/payments/{$paymentId}/pixQrCode")->throw()->json();
+        return $this->getWithRetry("/payments/{$paymentId}/pixQrCode");
+    }
+
+    public function findPaymentByExternalReference(string $reference): ?array
+    {
+        $response = $this->getWithRetry('/payments', [
+            'externalReference' => $reference,
+            'limit' => 10,
+        ]);
+
+        foreach ($response['data'] ?? [] as $payment) {
+            if (($payment['externalReference'] ?? null) === $reference
+                && !in_array($payment['status'] ?? null, ['OVERDUE', 'DELETED', 'REFUNDED'], true)) {
+                return $payment;
+            }
+        }
+
+        return null;
     }
 
     public function createCardCheckout(string $customerId, float $value, string $reference, string $description): array
@@ -90,5 +111,27 @@ class AsaasService
                 'value' => $value,
             ]],
         ])->throw()->json();
+    }
+
+    private function getWithRetry(string $uri, array $query = []): array
+    {
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            try {
+                $response = $this->request()->get($uri, $query)->throw()->json();
+                return is_array($response) ? $response : [];
+            } catch (ConnectionException $exception) {
+                if ($attempt === 2) {
+                    throw $exception;
+                }
+            } catch (RequestException $exception) {
+                if (!$exception->response?->serverError() || $attempt === 2) {
+                    throw $exception;
+                }
+            }
+
+            usleep(200_000 * ($attempt + 1));
+        }
+
+        throw new LogicException('A consulta ao Asaas terminou sem resposta nem exceção.');
     }
 }

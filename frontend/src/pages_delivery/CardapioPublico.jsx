@@ -5,9 +5,17 @@ import { resolveApiBase, resolveAssetUrl } from '../utils/apiBase'
 const API_BASE = resolveApiBase()
 const SESSION_KEY = 'pedido_online_sessao'
 const DRAFT_KEY = 'pedido_online_dados'
+const IDEMPOTENCY_KEY = 'pedido_online_chave_idempotencia'
 const TAXA_ENTREGA_FALLBACK = 8
 const PEDIDO_MINIMO = 20
 
+function gerarChaveIdempotencia() {
+  const bytes = window.crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
 
 /*
  * Checkout mais simples:
@@ -17,7 +25,7 @@ const PEDIDO_MINIMO = 20
  */
 const CHECKOUT_STYLE = `
 .menu-checkout-simples {
-  background: var(--surface, #fff);
+  background: var(--panel, #fff);
   border: 0;
   box-shadow: none;
   border-radius: 0;
@@ -149,6 +157,10 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
   const [observacao, setObservacao] = useState('')
   const [enviando, setEnviando] = useState(false)
   const [erroEnvio, setErroEnvio] = useState('')
+  const [pixCopiado, setPixCopiado] = useState(false)
+  const [erroCopiarPix, setErroCopiarPix] = useState('')
+  const pixPayloadRef = useRef(null)
+  const envioPedidoEmAndamento = useRef(false)
 
   const [pedidoAtivo, setPedidoAtivo] = useState(() => {
     try {
@@ -169,7 +181,10 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
 
   const carregarCardapio = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE}/pedir`, { headers: { Accept: 'application/json' } })
+      const response = await fetch(`${API_BASE}/pedir`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(10000),
+      })
       if (!response.ok) {
         // So mostra a tela de erro se ainda nao tinha nada carregado - uma falha passageira
         // no refresh silencioso em segundo plano nao deve derrubar o cardapio ja exibido.
@@ -195,7 +210,9 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
   // se o admin fechar a loja ou mudar algo enquanto o cliente esta navegando, reflete sozinho.
   useEffect(() => {
     carregarCardapio()
-    const timer = setInterval(carregarCardapio, 15000)
+    const timer = setInterval(() => {
+      if (document.visibilityState !== 'hidden') carregarCardapio()
+    }, 15000)
     return () => clearInterval(timer)
   }, [carregarCardapio])
 
@@ -215,27 +232,76 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
     }
   }, [])
 
-  const consultarStatus = useCallback(async (codigoQr) => {
+  const consultarStatus = useCallback(async (codigoQr, incluirDadosPix = true) => {
     try {
-      const response = await fetch(`${API_BASE}/pedir/status/${codigoQr}`, { headers: { Accept: 'application/json' } })
-      if (!response.ok) return
-      setStatusPedido(await response.json())
+      const incluirPix = incluirDadosPix ? '1' : '0'
+      const response = await fetch(
+        `${API_BASE}/pedir/status/${encodeURIComponent(codigoQr)}?include_pix_data=${incluirPix}`,
+        {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(10000),
+        },
+      )
+      if (!response.ok) return false
+
+      const payload = await response.json()
+      setStatusPedido((previous) => {
+        const payment = payload.payment
+        const previousPix = previous?.payment?.pix
+        if (payment?.method === 'pix' && previousPix) {
+          return {
+            ...(previous || {}),
+            ...payload,
+            payment: {
+              ...payment,
+              pix: {
+                ...previousPix,
+                ...payment.pix,
+                encoded_image: payment.pix?.encoded_image || previousPix.encoded_image,
+                payload: payment.pix?.payload || previousPix.payload,
+                expiration_date: payment.pix?.expiration_date || previousPix.expiration_date,
+              },
+            },
+          }
+        }
+        return { ...(previous || {}), ...payload }
+      })
+      return true
     } catch {
-      // sem conexao momentanea: mantem o ultimo status conhecido na tela
+      return false
     }
   }, [])
 
   useEffect(() => {
-    if (!pedidoAtivo) return undefined
+    if (!pedidoAtivo?.codigoQr) return undefined
 
     const finalizado =
       statusPedido?.status === 'entregue' || statusPedido?.status === 'recusado'
     if (finalizado) return undefined
 
-    consultarStatus(pedidoAtivo.codigoQr)
-    const timer = setInterval(() => consultarStatus(pedidoAtivo.codigoQr), 5000)
-    return () => clearInterval(timer)
-  }, [pedidoAtivo, statusPedido?.status, consultarStatus])
+    let timer
+    let parado = false
+    let incluirDadosPix = true
+    let intervalo = 5000
+
+    const consultar = async () => {
+      if (document.visibilityState === 'hidden') {
+        intervalo = 15000
+      } else {
+        const sucesso = await consultarStatus(pedidoAtivo.codigoQr, incluirDadosPix)
+        incluirDadosPix = false
+        intervalo = sucesso ? 5000 : Math.min(intervalo * 2, 30000)
+      }
+
+      if (!parado) timer = setTimeout(consultar, intervalo)
+    }
+
+    void consultar()
+    return () => {
+      parado = true
+      clearTimeout(timer)
+    }
+  }, [pedidoAtivo?.codigoQr, statusPedido?.status, consultarStatus])
 
   const categorias = useMemo(() => {
     if (!cardapio) return ['Todos']
@@ -284,8 +350,51 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
     })
   }
 
+  const copiarPix = async () => {
+    const payload = statusPedido?.payment?.pix?.payload
+    if (!payload) {
+      setErroCopiarPix('O código Pix não está disponível.')
+      return
+    }
+
+    setErroCopiarPix('')
+
+    let erroClipboard
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('A área de transferência não está disponível neste endereço.')
+      }
+      await navigator.clipboard.writeText(payload)
+      setPixCopiado(true)
+      return
+    } catch (error) {
+      erroClipboard = error
+    }
+
+    let copiado = false
+    let erroFallback
+    try {
+      const campoPix = pixPayloadRef.current
+      if (!campoPix) throw new Error('O campo do código Pix não está disponível.')
+      campoPix.focus()
+      campoPix.select()
+      copiado = document.execCommand('copy')
+    } catch (error) {
+      erroFallback = error
+    }
+
+    if (!copiado) {
+      console.error('Falha ao copiar o código Pix.', { erroClipboard, erroFallback })
+      setErroCopiarPix('Não foi possível copiar. Selecione o código acima e copie manualmente.')
+      return
+    }
+
+    setPixCopiado(true)
+  }
+
   const fazerPedido = async (event) => {
     event.preventDefault()
+    if (envioPedidoEmAndamento.current) return
     setErroEnvio('')
 
     if (itensCarrinho.length === 0) {
@@ -294,50 +403,83 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
     }
 
     window.localStorage.setItem(DRAFT_KEY, JSON.stringify(dados))
+    const chaveSalva = window.localStorage.getItem(IDEMPOTENCY_KEY)
+    const idempotencyKey = chaveSalva || gerarChaveIdempotencia()
+    window.localStorage.setItem(IDEMPOTENCY_KEY, idempotencyKey)
+    envioPedidoEmAndamento.current = true
     setEnviando(true)
 
-    const response = await fetch(`${API_BASE}/pedir`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({
-        nome: dados.nome,
-        telefone: dados.telefone,
-        tipo_entrega: tipoEntrega,
-        cep: tipoEntrega === 'delivery' ? dados.cep : undefined,
-        rua: tipoEntrega === 'delivery' ? dados.rua : undefined,
-        cidade: tipoEntrega === 'delivery' ? dados.cidade : undefined,
-        uf: tipoEntrega === 'delivery' ? dados.uf : undefined,
-        endereco: tipoEntrega === 'delivery' ? dados.endereco : undefined,
-        payment_method: formaPagamento,
-        cpf_cnpj: ['pix', 'cartao_online'].includes(formaPagamento) ? cpfCnpj : undefined,
-        email: formaPagamento === 'cartao_online' ? email : undefined,
-        numero: formaPagamento === 'cartao_online' ? numero : undefined,
-        change_for: formaPagamento === 'dinheiro' && trocoPara ? Number(trocoPara) : undefined,
-        note: observacao.trim() || undefined,
-        items: itensCarrinho.map((item) => ({ id_produto: item.id, qty: item.qty })),
-      }),
-    })
+    try {
+      const response = await fetch(`${API_BASE}/pedir`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        },
+        signal: AbortSignal.timeout(60000),
+        body: JSON.stringify({
+          nome: dados.nome,
+          telefone: dados.telefone,
+          tipo_entrega: tipoEntrega,
+          cep: tipoEntrega === 'delivery' ? dados.cep : undefined,
+          rua: tipoEntrega === 'delivery' ? dados.rua : undefined,
+          cidade: tipoEntrega === 'delivery' ? dados.cidade : undefined,
+          uf: tipoEntrega === 'delivery' ? dados.uf : undefined,
+          endereco: tipoEntrega === 'delivery' ? dados.endereco : undefined,
+          payment_method: formaPagamento,
+          cpf_cnpj: ['pix', 'cartao_online'].includes(formaPagamento) ? cpfCnpj : undefined,
+          email: formaPagamento === 'cartao_online' ? email : undefined,
+          numero: formaPagamento === 'cartao_online' ? numero : undefined,
+          change_for: formaPagamento === 'dinheiro' && trocoPara ? Number(trocoPara) : undefined,
+          note: observacao.trim() || undefined,
+          items: itensCarrinho.map((item) => ({ id_produto: item.id, qty: item.qty })),
+        }),
+      })
 
-    const payload = await response.json().catch(() => ({}))
-    setEnviando(false)
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        if (response.status === 422) window.localStorage.removeItem(IDEMPOTENCY_KEY)
+        setErroEnvio(payload.message || 'Nao foi possivel enviar o pedido. Confira os dados.')
+        return
+      }
 
-    if (!response.ok) {
-      setErroEnvio(payload.message || 'Nao foi possivel enviar o pedido. Confira os dados.')
-      return
+      const novoPedidoAtivo = {
+        codigoQr: payload.codigo_qr,
+        numero: payload.number,
+        deliveryNumber: payload.delivery_number,
+        tipoEntrega: payload.tipo_entrega,
+      }
+      window.localStorage.setItem(SESSION_KEY, JSON.stringify(novoPedidoAtivo))
+      setPedidoAtivo(novoPedidoAtivo)
+      setStatusPedido({
+        status: payload.status,
+        number: payload.number,
+        delivery_number: payload.delivery_number,
+        tipo_entrega: payload.tipo_entrega,
+        subtotal: payload.subtotal,
+        total: payload.total,
+        payment: payload.payment,
+        payment_message: payload.payment_message,
+      })
+      setCarrinho({})
+      setObservacao('')
+    } catch (error) {
+      console.error('Falha ao confirmar o envio do pedido.', error)
+      setErroEnvio('Não foi possível confirmar o envio. Tente novamente; a mesma tentativa será reutilizada para evitar duplicidade.')
+    } finally {
+      envioPedidoEmAndamento.current = false
+      setEnviando(false)
     }
-
-    const novoPedidoAtivo = { codigoQr: payload.codigo_qr, numero: payload.number, deliveryNumber: payload.delivery_number, tipoEntrega: payload.tipo_entrega }
-    window.localStorage.setItem(SESSION_KEY, JSON.stringify(novoPedidoAtivo))
-    setPedidoAtivo(novoPedidoAtivo)
-    setStatusPedido({ status: payload.status, number: payload.number, delivery_number: payload.delivery_number, tipo_entrega: payload.tipo_entrega, total: payload.total })
-    setCarrinho({})
-    setObservacao('')
   }
 
   const fazerNovoPedido = () => {
     window.localStorage.removeItem(SESSION_KEY)
+    window.localStorage.removeItem(IDEMPOTENCY_KEY)
     setPedidoAtivo(null)
     setStatusPedido(null)
+    setPixCopiado(false)
+    setErroCopiarPix('')
     setNotaAvaliacao(0)
     setComentarioAvaliacao('')
     setErroAvaliacao('')
@@ -461,7 +603,23 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
           <p style={{ color: 'var(--text)' }}>
             Total: <strong>{formatarPreco(statusPedido.total)}</strong>
           </p>
-          {statusPedido.payment?.method === 'pix' && statusPedido.payment.pix?.payload && (
+          {statusPedido.payment?.status === 'APROVADO' && (
+            <p role="status">
+              Pagamento confirmado.
+              {statusPedido.status === 'aguardando_confirmacao'
+                ? ' O pedido aguarda o aceite do restaurante.'
+                : ''}
+            </p>
+          )}
+          {statusPedido.payment_message && <p role="status">{statusPedido.payment_message}</p>}
+          {statusPedido.payment?.method === 'pix'
+            && statusPedido.payment.status === 'PENDENTE'
+            && !statusPedido.payment.pix?.payload && (
+              <p role="status">Estamos atualizando os dados do Pix. Esta tela consulta o pagamento automaticamente.</p>
+            )}
+          {statusPedido.payment?.method === 'pix'
+            && statusPedido.payment.status !== 'APROVADO'
+            && statusPedido.payment.pix?.payload && (
             <div className="menu-pagamento-online">
               <h3>Pagamento Pix</h3>
               {statusPedido.payment.pix.encoded_image && (
@@ -472,17 +630,26 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
                   height={220}
                 />
               )}
-              <textarea readOnly value={statusPedido.payment.pix.payload} rows={3} aria-label="Pix copia e cola" />
+              <textarea
+                ref={pixPayloadRef}
+                readOnly
+                value={statusPedido.payment.pix.payload}
+                rows={3}
+                aria-label="Pix copia e cola"
+              />
               <button
                 className="menu-finalizar-pro"
                 type="button"
-                onClick={() => navigator.clipboard?.writeText(statusPedido.payment.pix.payload)}
+                onClick={copiarPix}
               >
-                Copiar Pix copia e cola
+                {pixCopiado ? 'Pix copiado!' : 'Copiar Pix copia e cola'}
               </button>
+              {erroCopiarPix && <small role="alert" style={{ color: 'var(--danger)' }}>{erroCopiarPix}</small>}
             </div>
           )}
-          {statusPedido.payment?.method === 'cartao' && statusPedido.payment.checkout_url && (
+          {statusPedido.payment?.method === 'cartao'
+            && statusPedido.payment.status !== 'APROVADO'
+            && statusPedido.payment.checkout_url && (
             <a className="menu-finalizar-pro" href={statusPedido.payment.checkout_url} target="_blank" rel="noreferrer">
               Pagar com cartão
             </a>
@@ -632,7 +799,10 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
             ) : (
               produtosFiltrados.map((produto) => {
                 return (
-                  <article className="menu-produto-pro" key={produto.id}>
+                  <article
+                    className={`menu-produto-pro${produto.imagem ? '' : ' menu-produto-sem-imagem'}`}
+                    key={produto.id}
+                  >
                     {produto.imagem ? (
                       <div className="menu-produto-img-pro">
                         <img src={resolveAssetUrl(produto.imagem)} alt={produto.nome} />

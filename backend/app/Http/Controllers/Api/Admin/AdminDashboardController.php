@@ -31,7 +31,11 @@ class AdminDashboardController extends Controller
             ->get();
 
         $users = User::whereIn('perfil', ['ADMIN', 'GERENTE', 'ENTREGADOR', 'ATENDENTE'])->get();
-        $tables = Mesa::with(['pedidos' => fn ($query) => $query->orderByDesc('dt_pedido')])->orderBy('nr_mesa')->get();
+        $tables = Mesa::with([
+            'pedidos' => fn ($query) => $query->orderByDesc('dt_pedido'),
+            'comandaAberta.pedidos.cliente.usuario',
+            'comandaAberta.pedidos.itens.produto',
+        ])->orderBy('nr_mesa')->get();
         $payments = Pagamento::with('pedido.mesa', 'pedido.cliente.usuario')->orderByDesc('dt_cadastro')->get();
         $couriers = Entregador::with(['usuario', 'avaliacoes', 'entregas' => fn ($query) => $query->orderByDesc('dt_atualizacao')])->get();
         $companyId = (int) DB::table('empresa')->orderBy('id_empresa')->value('id_empresa');
@@ -259,13 +263,15 @@ class AdminDashboardController extends Controller
             ->filter(fn (Categoria $categoria) => isset($tempoMedioPorCategoria[$categoria->id_categoria]))
             ->map(function (Categoria $categoria) use ($tempoMedioPorCategoria, $itensNaFilaPorCategoria) {
                 $info = $tempoMedioPorCategoria[$categoria->id_categoria];
+                $itensNaFila = (int) ($itensNaFilaPorCategoria[$categoria->id_categoria] ?? 0);
+                $produtosAtivos = (int) $info->total;
 
                 return [
                     'id' => $categoria->id_categoria,
                     'name' => $categoria->nm_categoria,
-                    'leadTime' => round($info->media) . ' min (medio)',
-                    'load' => ($itensNaFilaPorCategoria[$categoria->id_categoria] ?? 0) . ' na fila',
-                    'team' => $info->total . ' produto(s) no cardapio',
+                    'leadTime' => round($info->media) . ' min (média)',
+                    'load' => $itensNaFila . ($itensNaFila === 1 ? ' item na fila' : ' itens na fila'),
+                    'team' => $produtosAtivos . ($produtosAtivos === 1 ? ' produto ativo' : ' produtos ativos'),
                 ];
             })
             ->values()
@@ -273,7 +279,7 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * "Mise en place": o que preparar com prioridade agora, com base na demanda real dos
+     * Notas de preparo: o que priorizar agora, com base na demanda real dos
      * pedidos que ja estao na cozinha (CONFIRMADO/PREPARANDO) - nao inventa itens, so ordena
      * os produtos pedidos pela quantidade total pendente.
      */
@@ -283,11 +289,15 @@ class AdminDashboardController extends Controller
             ->whereIn('status', ['CONFIRMADO', 'PREPARANDO'])
             ->flatMap(fn (Pedido $order) => $order->itens)
             ->groupBy(fn (ItemPedido $item) => $item->produto?->nm_produto ?? 'Item')
-            ->map(fn (Collection $itens, string $nome) => [
-                'item' => $nome,
-                'pending' => (int) $itens->sum('nr_quantidade'),
-                'note' => $itens->count() . ' pedido(s) aguardando',
-            ])
+            ->map(function (Collection $itens, string $nome): array {
+                $pedidosAguardando = $itens->count();
+
+                return [
+                    'item' => $nome,
+                    'pending' => (int) $itens->sum('nr_quantidade'),
+                    'note' => $pedidosAguardando . ($pedidosAguardando === 1 ? ' pedido aguardando' : ' pedidos aguardando'),
+                ];
+            })
             ->sortByDesc('pending')
             ->take(8)
             ->values();
@@ -344,6 +354,18 @@ class AdminDashboardController extends Controller
         foreach ($tables as $table) {
             $bucket = $table->nr_mesa >= 10 ? 'varanda' : 'interno';
             $openOrder = $table->pedidos->first(fn ($order) => !in_array($order->status, ['FINALIZADO', 'CANCELADO'], true));
+            // Conta da mesa = comanda aberta inteira (todas as rodadas de pedido), nao so o
+            // ultimo pedido. Sem comanda (pedido de mesa lancado pelo atendente), cai no antigo.
+            $comanda = $table->comandaAberta;
+            $ticket = $comanda ? $comanda->total : ($openOrder ? (float) $openOrder->vl_total : 0);
+            $cliente = $comanda?->pedidos->last()?->cliente?->usuario?->nm_usuario
+                ?? $openOrder?->cliente?->usuario?->nm_usuario;
+            // Pedido unico da mesa (acumula as rodadas) - dele saem status e "novos itens".
+            $pedidoMesa = $comanda?->pedidos
+                ->filter(fn ($pedido) => !in_array($pedido->status, ['FINALIZADO', 'CANCELADO'], true))
+                ->sortByDesc('id_pedido')
+                ->first();
+            $temNovos = $pedidoMesa?->dt_ultimo_acrescimo?->gt(now()->subMinutes(10)) ?? false;
 
             $groups[$bucket]['tables'][] = [
                 'id' => $table->id_mesa,
@@ -354,8 +376,15 @@ class AdminDashboardController extends Controller
                     'RESERVADA' => 'reserved',
                     default => 'free',
                 },
-                'ticket' => $openOrder ? (float) $openOrder->vl_total : 0,
-                'waiter' => $openOrder?->cliente?->usuario?->nm_usuario ?? '-',
+                'ticket' => $ticket,
+                'waiter' => $cliente ?? '-',
+                'openedAt' => optional($comanda?->dt_cadastro)->format('H:i'),
+                'items' => $comanda ? $comanda->resumoConsumo() : [],
+                'orderNumber' => $pedidoMesa?->id_pedido,
+                'orderStatus' => $pedidoMesa?->status,
+                'billRequested' => $comanda?->status === 'AGUARDANDO_PAGAMENTO',
+                'hasNewItems' => $temNovos,
+                'lastAddedAt' => optional($pedidoMesa?->dt_ultimo_acrescimo)->format('H:i'),
                 'qrToken' => $table->qr_code_token,
             ];
         }

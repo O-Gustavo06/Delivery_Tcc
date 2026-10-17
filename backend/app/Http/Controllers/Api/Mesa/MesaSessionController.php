@@ -67,6 +67,45 @@ class MesaSessionController extends Controller
     }
 
     /**
+     * POST /mesa/{token}/ocupar
+     * Chamado assim que o cliente le o QR da mesa (cardapio presencial): abre a comanda e
+     * marca a mesa como OCUPADA na hora, sem esperar o primeiro pedido nem identificacao.
+     * Idempotente - se a mesa ja tem comanda aberta, so devolve o estado atual.
+     */
+    public function ocupar(Request $request, string $token): JsonResponse
+    {
+        $mesa = Mesa::where('qr_code_token', $token)->first();
+
+        if (!$mesa) {
+            return response()->json(['message' => 'Mesa nao encontrada.'], 404);
+        }
+
+        self::garantirComandaAberta($mesa);
+
+        return $this->show($request, $token);
+    }
+
+    /** Comanda aberta da mesa (cria se nao houver) + mesa marcada como OCUPADA. */
+    private static function garantirComandaAberta(Mesa $mesa): Comanda
+    {
+        return DB::transaction(function () use ($mesa) {
+            // lockForUpdate: dois celulares lendo o QR ao mesmo tempo nao abrem duas comandas.
+            Mesa::whereKey($mesa->id_mesa)->lockForUpdate()->first();
+
+            $comanda = $mesa->comandaAberta()->first();
+            if (!$comanda) {
+                $comanda = Comanda::create(['id_mesa' => $mesa->id_mesa, 'status' => 'ABERTA']);
+            }
+
+            if ($mesa->status_ocupacao !== 'OCUPADA') {
+                $mesa->update(['status_ocupacao' => 'OCUPADA']);
+            }
+
+            return $comanda;
+        });
+    }
+
+    /**
      * url_imagem no banco guarda so o caminho relativo (/images/produtos/x.jpg) - a URL
      * completa e montada na hora, usando o host que o cliente usou pra acessar a API. Isso
      * evita salvar "localhost" fixo no banco e quebrar o acesso via IP da rede (celular).
@@ -133,11 +172,7 @@ class MesaSessionController extends Controller
             });
         }
 
-        $comanda = $mesa->comandaAberta()->first();
-        if (!$comanda) {
-            $comanda = Comanda::create(['id_mesa' => $mesa->id_mesa, 'status' => 'ABERTA']);
-            $mesa->update(['status_ocupacao' => 'OCUPADA']);
-        }
+        $comanda = self::garantirComandaAberta($mesa);
 
         return response()->json([
             'cliente' => [
@@ -150,7 +185,10 @@ class MesaSessionController extends Controller
 
     /**
      * POST /mesa/{token}/pedidos
-     * Body: { id_cliente, items: [{ id_produto, qty }] }
+     * Body: { id_cliente? | nome?, items: [{ id_produto, qty, note? }] }
+     * id_cliente: fluxo da /mesa (cliente ja se identificou pelo telefone). nome: cardapio
+     * presencial (QR da mesa), onde o cliente so informa o nome - vira um cliente novo na
+     * primeira vez e o front reaproveita o id_cliente devolvido nos proximos pedidos.
      * Preco sempre vem do catalogo (nunca do cliente) - evita manipulacao no autoatendimento.
      */
     public function pedido(Request $request, string $token): JsonResponse
@@ -160,17 +198,38 @@ class MesaSessionController extends Controller
             return response()->json(['message' => 'Mesa nao encontrada.'], 404);
         }
 
-        $comanda = $mesa->comandaAberta()->first();
-        if (!$comanda || $comanda->status !== 'ABERTA') {
-            return response()->json(['message' => 'Essa comanda ja foi fechada. Chame o garcom.'], 422);
-        }
-
         $data = $request->validate([
-            'id_cliente' => ['required', 'integer', 'exists:cliente,id_cliente'],
+            'id_cliente' => ['nullable', 'integer', 'exists:cliente,id_cliente', 'required_without:nome'],
+            'nome' => ['nullable', 'string', 'max:150', 'required_without:id_cliente'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.id_produto' => ['required', 'integer', 'exists:produto,id_produto'],
-            'items.*.qty' => ['required', 'integer', 'min:1'],
+            'items.*.qty' => ['required', 'integer', 'min:1', 'max:50'],
+            'items.*.note' => ['nullable', 'string', 'max:300'],
         ]);
+
+        $comanda = $mesa->comandaAberta()->first();
+        if ($comanda && $comanda->status !== 'ABERTA') {
+            return response()->json(['message' => 'A conta dessa mesa ja foi pedida. Chame o garcom.'], 422);
+        }
+        // Mesa sem comanda (ex.: caixa liberou e o cliente continuou pedindo): reabre na hora.
+        $comanda ??= self::garantirComandaAberta($mesa);
+
+        if (empty($data['id_cliente'])) {
+            $data['id_cliente'] = DB::transaction(function () use ($data) {
+                $emailSintetico = strtolower(preg_replace('/\s+/', '.', trim($data['nome'])))
+                    . '+' . now()->timestamp . Str::lower(Str::random(4)) . '@cliente.local';
+
+                $usuario = \App\Models\User::create([
+                    'nm_usuario' => trim($data['nome']),
+                    'email' => $emailSintetico,
+                    'senha_hash' => bcrypt(Str::random(40)),
+                    'perfil' => 'CLIENTE',
+                    'fl_ativo' => true,
+                ]);
+
+                return Cliente::create(['id_usuario' => $usuario->id_usuario])->id_cliente;
+            });
+        }
 
         $produtos = Produto::whereIn('id_produto', collect($data['items'])->pluck('id_produto'))
             ->where('id_empresa', $mesa->id_empresa)
@@ -178,30 +237,49 @@ class MesaSessionController extends Controller
             ->get()
             ->keyBy('id_produto');
 
-        $pedido = DB::transaction(function () use ($data, $mesa, $comanda, $produtos) {
-            $total = 0;
-            foreach ($data['items'] as $item) {
-                $produto = $produtos->get($item['id_produto']);
-                if ($produto) {
-                    $total += (float) $produto->vl_preco_base * $item['qty'];
-                }
-            }
+        $nomeCliente = !empty($data['nome'])
+            ? trim($data['nome'])
+            : Cliente::with('usuario')->find($data['id_cliente'])?->usuario?->nm_usuario;
 
-            $pedido = Pedido::create([
-                'id_empresa' => $mesa->id_empresa,
-                'id_cliente' => $data['id_cliente'],
-                'id_mesa' => $mesa->id_mesa,
-                'id_comanda' => $comanda->id_comanda,
-                'codigo_qr' => (string) Str::uuid(),
-                'tipo_pedido' => 'MESA',
-                'canal_origem' => 'LOJA',
-                // O cliente ja esta fisicamente na mesa - nao faz sentido esperar um atendente
-                // clicar "enviar cozinha" manualmente. Entra direto na fila da cozinha (CONFIRMADO);
-                // quem decide quando comecar a preparar de fato e a propria cozinha.
-                'status' => 'CONFIRMADO',
-                'vl_total' => round($total, 2),
-                'vl_taxa_entrega' => 0,
-            ]);
+        $pedido = DB::transaction(function () use ($data, $mesa, $comanda, $produtos, $nomeCliente) {
+            // Um pedido so por mesa: enquanto a comanda estiver aberta, cada nova rodada entra no
+            // MESMO pedido (lockForUpdate evita dois celulares da mesa criarem dois pedidos juntos).
+            // Pedido cancelado/finalizado pelo atendente nao recebe mais itens - ai abre outro.
+            $pedido = Pedido::where('id_comanda', $comanda->id_comanda)
+                ->whereNotIn('status', ['CANCELADO', 'FINALIZADO'])
+                ->orderByDesc('id_pedido')
+                ->lockForUpdate()
+                ->first();
+
+            $acrescimo = (bool) $pedido;
+
+            if (!$pedido) {
+                $pedido = Pedido::create([
+                    'id_empresa' => $mesa->id_empresa,
+                    'id_cliente' => $data['id_cliente'],
+                    'id_mesa' => $mesa->id_mesa,
+                    'id_comanda' => $comanda->id_comanda,
+                    'codigo_qr' => (string) Str::uuid(),
+                    'tipo_pedido' => 'MESA',
+                    'canal_origem' => 'PRESENCIAL',
+                    // O cliente ja esta fisicamente na mesa - nao faz sentido esperar um atendente
+                    // clicar "enviar cozinha" manualmente. Entra direto na fila da cozinha (CONFIRMADO);
+                    // quem decide quando comecar a preparar de fato e a propria cozinha.
+                    'status' => 'CONFIRMADO',
+                    'vl_total' => 0,
+                    'vl_taxa_entrega' => 0,
+                ]);
+
+                // Forma real so se sabe no fechamento; PIX aqui e so placeholder (coluna nao aceita nulo).
+                Pagamento::create([
+                    'id_pedido' => $pedido->id_pedido,
+                    'forma' => 'PIX',
+                    'status' => 'PENDENTE',
+                    'vl_total' => 0,
+                    'vl_desconto' => 0,
+                    'vl_final' => 0,
+                ]);
+            }
 
             foreach ($data['items'] as $item) {
                 $produto = $produtos->get($item['id_produto']);
@@ -215,25 +293,40 @@ class MesaSessionController extends Controller
                     'nr_quantidade' => $item['qty'],
                     'vl_preco_unitario' => $produto->vl_preco_base,
                     'vl_subtotal' => round((float) $produto->vl_preco_base * $item['qty'], 2),
+                    'adicionais_json' => array_filter([
+                        'observacao' => !empty($item['note']) ? mb_strtoupper(trim($item['note'])) : null,
+                        // Quem da mesa pediu (o pedido e um so, mas cada rodada pode ser de alguem).
+                        'cliente' => $nomeCliente,
+                    ]) ?: null,
                 ]);
             }
 
-            // Forma real so se sabe no fechamento; PIX aqui e so placeholder (coluna nao aceita nulo).
-            Pagamento::create([
-                'id_pedido' => $pedido->id_pedido,
-                'forma' => 'PIX',
-                'status' => 'PENDENTE',
-                'vl_total' => round($total, 2),
-                'vl_desconto' => 0,
-                'vl_final' => round($total, 2),
-            ]);
+            $total = round((float) ItemPedido::where('id_pedido', $pedido->id_pedido)->sum('vl_subtotal'), 2);
+            $atualizacao = ['vl_total' => $total];
+
+            if ($acrescimo) {
+                $atualizacao['dt_ultimo_acrescimo'] = now();
+                $atualizacao['nr_acrescimos'] = $pedido->nr_acrescimos + 1;
+                // Ja tinha saido da cozinha (pronto/servido): os itens novos precisam ser feitos,
+                // entao o pedido volta pra fila. Em preparo continua em preparo.
+                if (in_array($pedido->status, ['PRONTO', 'ENTREGANDO'], true)) {
+                    $atualizacao['status'] = 'CONFIRMADO';
+                }
+            }
+
+            $pedido->update($atualizacao);
+            Pagamento::where('id_pedido', $pedido->id_pedido)->update(['vl_total' => $total, 'vl_final' => $total]);
 
             return $pedido;
         });
 
         $comanda = $comanda->fresh(['pedidos.itens.produto', 'pedidos.cliente.usuario']);
 
-        return response()->json($this->comandaPayload($comanda), 201);
+        return response()->json([
+            ...$this->comandaPayload($comanda),
+            'id_cliente' => (int) $data['id_cliente'],
+            'id_pedido' => $pedido->id_pedido,
+        ], 201);
     }
 
     /**
@@ -280,7 +373,9 @@ class MesaSessionController extends Controller
             'id_comanda' => $comanda->id_comanda,
             'status' => $comanda->status,
             'forma_pagamento' => $comanda->forma_pagamento,
-            'total' => (float) $comanda->pedidos->sum('vl_total'),
+            'total' => $comanda->total,
+            'dt_abertura' => optional($comanda->dt_cadastro)->format('Y-m-d H:i:s'),
+            'consumo' => $comanda->resumoConsumo(),
             'pedidos' => $comanda->pedidos->map(fn (Pedido $pedido) => [
                 'id_pedido' => $pedido->id_pedido,
                 'cliente_nome' => $pedido->cliente?->usuario?->nm_usuario,

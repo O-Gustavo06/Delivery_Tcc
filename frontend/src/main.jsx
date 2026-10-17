@@ -13,12 +13,26 @@ async function ajustarManifestPelaRota() {
   const path = window.location.pathname
   let overrides = null
 
-  if (path.startsWith('/cardapio/')) {
+  if (path === '/cardapio/presencial') {
+    overrides = {
+      name: "Cardápio - Chef's Hub",
+      short_name: 'Cardápio',
+      start_url: path,
+      scope: path,
+    }
+  } else if (path.startsWith('/cardapio/')) {
     overrides = {
       name: "Cardápio Online - Chef's Hub",
       short_name: 'Cardápio',
       start_url: path,
       scope: '/cardapio/',
+    }
+  } else if (path === '/presencial' || path.startsWith('/presencial/')) {
+    overrides = {
+      name: "Cardápio - Chef's Hub",
+      short_name: 'Cardápio',
+      start_url: path,
+      scope: path,
     }
   } else if (path.startsWith('/mesa/')) {
     overrides = {

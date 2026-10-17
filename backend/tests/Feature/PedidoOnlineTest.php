@@ -32,6 +32,7 @@ class PedidoOnlineTest extends TestCase
             'cep' => '01310-100',
             'endereco' => 'Rua das Palmeiras, 200',
             'payment_method' => 'pix',
+            'cpf_cnpj' => '12345678909',
             'items' => [],
         ], $overrides);
     }
@@ -58,7 +59,8 @@ class PedidoOnlineTest extends TestCase
         ]));
 
         $response->assertStatus(201)
-            ->assertJsonPath('total', 60)
+            ->assertJsonPath('subtotal', 60)
+            ->assertJsonPath('total', 68)
             ->assertJsonPath('delivery_number', 1)
             ->assertJsonPath('status', 'aguardando_confirmacao');
 
@@ -69,8 +71,15 @@ class PedidoOnlineTest extends TestCase
             'vl_total' => 60,
         ]);
 
+        $idPedido = \App\Models\Pedido::where('vl_total', 60)->value('id_pedido');
+        $this->assertDatabaseHas('pagamento', [
+            'id_pedido' => $idPedido,
+            'vl_total' => 68,
+            'vl_final' => 68,
+        ]);
+
         $this->assertDatabaseHas('entrega', [
-            'id_pedido' => \App\Models\Pedido::where('vl_total', 60)->value('id_pedido'),
+            'id_pedido' => $idPedido,
             'latitude_destino' => -23.5614,
             'longitude_destino' => -46.6558,
         ]);
@@ -87,6 +96,7 @@ class PedidoOnlineTest extends TestCase
             'telefone' => '11900001111',
             'tipo_entrega' => 'retirada',
             'payment_method' => 'pix',
+            'cpf_cnpj' => '12345678909',
             'items' => [['id_produto' => $produto->id_produto, 'qty' => 1]],
         ]);
 
@@ -208,6 +218,148 @@ class PedidoOnlineTest extends TestCase
         $this->assertDatabaseHas('pedido', ['nr_pedido_delivery' => 2]);
     }
 
+    public function test_repetir_post_com_mesma_chave_retorna_o_mesmo_pedido(): void
+    {
+        $empresa = $this->criarEmpresa();
+        $categoria = $this->criarCategoria($empresa);
+        $produto = $this->criarProduto($empresa, $categoria);
+        $idempotencyKey = (string) \Illuminate\Support\Str::uuid();
+        $payload = $this->pedidoPayload([
+            'items' => [['id_produto' => $produto->id_produto, 'qty' => 1]],
+        ]);
+
+        $primeiraResposta = $this->postJson('/api/pedir', $payload, [
+            'Idempotency-Key' => $idempotencyKey,
+        ])->assertCreated();
+        $segundaResposta = $this->postJson('/api/pedir', $payload, [
+            'Idempotency-Key' => $idempotencyKey,
+        ])->assertOk();
+
+        $segundaResposta->assertJsonPath('codigo_qr', $primeiraResposta->json('codigo_qr'));
+        $this->assertSame(1, \App\Models\Pedido::where('idempotency_key', $idempotencyKey)->count());
+        $this->assertSame(1, \App\Models\Pagamento::where('id_pedido', $primeiraResposta->json('number'))->count());
+    }
+
+    public function test_criacao_pix_persiste_cobranca_antes_do_qr_e_reutiliza_a_chave(): void
+    {
+        config([
+            'services.asaas.api_key' => 'asaas-teste',
+            'services.asaas.base_url' => 'https://api-sandbox.asaas.com/v3',
+        ]);
+        Http::fake([
+            'api-sandbox.asaas.com/v3/customers' => Http::response(['id' => 'cus_teste_1'], 201),
+            'api-sandbox.asaas.com/v3/payments' => Http::response(['id' => 'pay_teste_1', 'status' => 'PENDING'], 201),
+            'api-sandbox.asaas.com/v3/payments/pay_teste_1/pixQrCode' => Http::response([
+                'encodedImage' => 'imagem-teste',
+                'payload' => 'pix-copia-e-cola',
+                'expirationDate' => '2027-01-01 00:00:00',
+            ]),
+        ]);
+        $this->partialMock(\App\Services\GeocodingService::class, function ($mock) {
+            $mock->shouldReceive('coordenadasPorEndereco')->andReturn(null);
+        });
+
+        $empresa = $this->criarEmpresa();
+        $categoria = $this->criarCategoria($empresa);
+        $produto = $this->criarProduto($empresa, $categoria, ['vl_preco_base' => 20]);
+        $idempotencyKey = (string) \Illuminate\Support\Str::uuid();
+        $payload = $this->pedidoPayload([
+            'items' => [['id_produto' => $produto->id_produto, 'qty' => 1]],
+        ]);
+
+        $response = $this->postJson('/api/pedir', $payload, [
+            'Idempotency-Key' => $idempotencyKey,
+        ])->assertCreated()
+            ->assertJsonPath('total', 28)
+            ->assertJsonPath('payment.pix.payload', 'pix-copia-e-cola');
+
+        $this->assertDatabaseHas('pagamento', [
+            'id_pedido' => $response->json('number'),
+            'vl_final' => 28,
+        ]);
+        $this->assertDatabaseHas('transacao_pagamento', [
+            'provedor' => 'ASAAS',
+            'nsu' => 'pay_teste_1',
+            'status' => 'PENDENTE',
+        ]);
+        Http::assertSentCount(3);
+
+        $this->postJson('/api/pedir', $payload, [
+            'Idempotency-Key' => $idempotencyKey,
+        ])->assertOk()
+            ->assertJsonPath('codigo_qr', $response->json('codigo_qr'))
+            ->assertJsonPath('payment.pix.payload', 'pix-copia-e-cola');
+        Http::assertSentCount(3);
+    }
+
+    public function test_webhook_asaas_atualiza_pagamento_sem_avancar_pedido_e_ignora_evento_antigo(): void
+    {
+        config([
+            'services.asaas.api_key' => null,
+            'services.asaas.webhook_token' => 'webhook-teste',
+        ]);
+
+        $empresa = $this->criarEmpresa();
+        $categoria = $this->criarCategoria($empresa);
+        $produto = $this->criarProduto($empresa, $categoria);
+        $pedido = $this->postJson('/api/pedir', $this->pedidoPayload([
+            'items' => [['id_produto' => $produto->id_produto, 'qty' => 1]],
+        ]))->assertCreated();
+        $idPedido = \App\Models\Pedido::where('codigo_qr', $pedido->json('codigo_qr'))->value('id_pedido');
+        $pagamento = \App\Models\Pagamento::where('id_pedido', $idPedido)->firstOrFail();
+        $webhook = [
+            'event' => 'PAYMENT_CONFIRMED',
+            'payment' => [
+                'id' => 'pay_teste_123',
+                'externalReference' => "pedido:{$idPedido}",
+                'status' => 'CONFIRMED',
+            ],
+        ];
+
+        $this->postJson('/api/asaas/webhook', $webhook, [
+            'asaas-access-token' => 'webhook-teste',
+        ])->assertOk();
+        $this->postJson('/api/asaas/webhook', $webhook, [
+            'asaas-access-token' => 'webhook-teste',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('pagamento', [
+            'id_pagamento' => $pagamento->id_pagamento,
+            'status' => 'APROVADO',
+        ]);
+        $this->assertDatabaseHas('transacao_pagamento', [
+            'id_pagamento' => $pagamento->id_pagamento,
+            'provedor' => 'ASAAS',
+            'nsu' => 'pay_teste_123',
+            'status' => 'APROVADA',
+        ]);
+        $this->assertSame(1, \App\Models\TransacaoPagamento::where('provedor', 'ASAAS')
+            ->where('nsu', 'pay_teste_123')
+            ->count());
+        $this->assertDatabaseHas('pedido', [
+            'id_pedido' => $idPedido,
+            'status' => 'PENDENTE',
+        ]);
+
+        $this->postJson('/api/asaas/webhook', [
+            'event' => 'PAYMENT_OVERDUE',
+            'payment' => $webhook['payment'],
+        ], [
+            'asaas-access-token' => 'webhook-teste',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('pagamento', [
+            'id_pagamento' => $pagamento->id_pagamento,
+            'status' => 'APROVADO',
+        ]);
+        $this->assertDatabaseHas('transacao_pagamento', [
+            'id_pagamento' => $pagamento->id_pagamento,
+            'provedor' => 'ASAAS',
+            'nsu' => 'pay_teste_123',
+            'status' => 'APROVADA',
+        ]);
+    }
+
     public function test_admin_aceita_pedido_online_e_cliente_ve_status_atualizado(): void
     {
         $empresa = $this->criarEmpresa();
@@ -240,7 +392,8 @@ class PedidoOnlineTest extends TestCase
             'items' => [['id_produto' => $produtoInativo->id_produto, 'qty' => 1]],
         ]));
 
-        $response->assertStatus(201)->assertJsonPath('total', 0);
+        $response->assertStatus(422);
+        $this->assertDatabaseMissing('pedido', ['id_empresa' => $empresa->id_empresa]);
         $this->assertDatabaseMissing('item_pedido', ['id_produto' => $produtoInativo->id_produto]);
     }
 

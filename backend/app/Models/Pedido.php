@@ -25,6 +25,7 @@ class Pedido extends Model
         'id_mesa',
         'id_comanda',
         'codigo_qr',
+        'idempotency_key',
         'tipo_pedido',
         'nr_pedido_delivery',
         'canal_origem',
@@ -35,6 +36,8 @@ class Pedido extends Model
         'ds_observacao',
         'ds_nota_pedido',
         'dt_conclusao',
+        'dt_ultimo_acrescimo',
+        'nr_acrescimos',
     ];
 
     protected function casts(): array
@@ -43,6 +46,8 @@ class Pedido extends Model
             'vl_total' => 'decimal:2',
             'vl_taxa_entrega' => 'decimal:2',
             'dt_conclusao' => 'datetime',
+            'dt_ultimo_acrescimo' => 'datetime',
+            'nr_acrescimos' => 'integer',
         ];
     }
 

@@ -142,7 +142,9 @@ class AdminMesaController extends Controller
             'id_comanda' => $comanda->id_comanda,
             'status' => $comanda->status,
             'forma_pagamento' => $comanda->forma_pagamento,
-            'total' => (float) $comanda->pedidos->sum('vl_total'),
+            'total' => $comanda->total,
+            'dt_abertura' => optional($comanda->dt_cadastro)->format('Y-m-d H:i:s'),
+            'consumo' => $comanda->resumoConsumo(),
             'dt_fechamento' => optional($comanda->dt_fechamento)->format('Y-m-d H:i:s'),
             'pedidos' => $comanda->pedidos->map(fn (Pedido $pedido) => [
                 'id_pedido' => $pedido->id_pedido,

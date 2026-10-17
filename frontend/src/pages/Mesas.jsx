@@ -10,6 +10,19 @@ const statusMap = {
 
 const formaLabel = { PIX: 'Pix', CARTAO: 'Cartão', DINHEIRO: 'Dinheiro' }
 
+// Status do pedido unico da mesa (vem do banco em maiusculo).
+const pedidoStatusMap = {
+  PENDENTE: { label: 'Novo', tone: 'badge-orange' },
+  CONFIRMADO: { label: 'Na cozinha', tone: 'badge-blue' },
+  PREPARANDO: { label: 'Em preparo', tone: 'badge-sun' },
+  PRONTO: { label: 'Pronto', tone: 'badge-green' },
+  ENTREGANDO: { label: 'Servindo', tone: 'badge-green' },
+}
+
+const MAX_ITENS_CARD = 5
+
+const PUBLIC_ORIGIN = (import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin).replace(/\/$/, '')
+
 function ComandasPendentes({ comandas, onConfirmar }) {
   const [confirmando, setConfirmando] = useState(null)
 
@@ -236,7 +249,11 @@ function ConfiguracaoPix({ empresa, onSalvar }) {
 
 function MesaQrCard({ mesa }) {
   const [qrDataUrl, setQrDataUrl] = useState('')
-  const url = `${window.location.origin}/mesa/${mesa.qrToken}`
+  // Leva pro cardapio presencial da mesa: a leitura ja marca a mesa como ocupada e os
+  // pedidos feitos por la entram na conta dela. Usa o endereco publico (ngrok) quando
+  // configurado - mesmo padrao do link do cardapio online (Pedidos_Ifood) - pra o QR nao
+  // sair com o IP interno de quem abriu o painel (ex.: 172.27.x.x do WSL).
+  const url = `${PUBLIC_ORIGIN}/presencial/${mesa.qrToken}`
 
   useEffect(() => {
     let cancelled = false
@@ -261,7 +278,9 @@ function formatMoney(value) {
   return Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
-function ComandaBlock({ comanda }) {
+function ComandaBlock({ comanda, detalhado = false }) {
+  const consumo = comanda.consumo || []
+
   return (
     <div className="card" style={{ display: 'grid', gap: 8 }}>
       <div className="order-header">
@@ -270,11 +289,52 @@ function ComandaBlock({ comanda }) {
         </span>
         <strong>{formatMoney(comanda.total)}</strong>
       </div>
+
+      {detalhado && (
+        <>
+          {comanda.dt_abertura && (
+            <small style={{ color: 'var(--muted)' }}>
+              Aberta às {new Date(comanda.dt_abertura.replace(' ', 'T')).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+              {comanda.forma_pagamento ? ` · pagamento: ${formaLabel[comanda.forma_pagamento] || comanda.forma_pagamento}` : ''}
+            </small>
+          )}
+          <div className="data-table">
+            <div className="data-row row-head" style={{ gridTemplateColumns: '0.5fr 2fr 1fr 1fr' }}>
+              <span>Qtd</span>
+              <span>Produto</span>
+              <span>Unitário</span>
+              <span>Subtotal</span>
+            </div>
+            {consumo.length === 0 && (
+              <p style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>Mesa ocupada, nenhum pedido ainda.</p>
+            )}
+            {consumo.map((item) => (
+              <div key={`${item.id_produto}-${item.preco}`} className="data-row" style={{ gridTemplateColumns: '0.5fr 2fr 1fr 1fr' }}>
+                <strong>{item.qty}x</strong>
+                <span>{item.nome}</span>
+                <span>{formatMoney(item.preco)}</span>
+                <strong>{formatMoney(item.subtotal)}</strong>
+              </div>
+            ))}
+            <div className="data-row" style={{ gridTemplateColumns: '0.5fr 2fr 1fr 1fr' }}>
+              <span />
+              <strong>Total da conta</strong>
+              <span />
+              <strong>{formatMoney(comanda.total)}</strong>
+            </div>
+          </div>
+          {comanda.pedidos.length > 0 && <h4 style={{ margin: '8px 0 0' }}>Pedidos por pessoa</h4>}
+        </>
+      )}
+
       {comanda.pedidos.map((pedido) => (
         <div key={pedido.id_pedido} className="data-row" style={{ gridTemplateColumns: '1fr 2fr 0.6fr' }}>
           <span>{pedido.cliente_nome}</span>
           <span>{pedido.itens.map((item) => `${item.qty}x ${item.nome}`).join(', ')}</span>
-          <span>{formatMoney(pedido.total)}</span>
+          {/* Cancelado fica no historico, mas fora do total da conta */}
+          <span style={pedido.status === 'CANCELADO' ? { textDecoration: 'line-through', color: 'var(--muted)' } : undefined}>
+            {formatMoney(pedido.total)}
+          </span>
         </div>
       ))}
     </div>
@@ -287,14 +347,15 @@ function MesaDetalheModal({ mesaId, numero, onClose, onFetch, onLiberar }) {
   const [detalhe, setDetalhe] = useState(null)
   const [liberando, setLiberando] = useState(false)
 
-  const carregar = () => {
+  const carregar = (silencioso = false) => {
     let cancelado = false
-    setCarregando(true)
+    if (!silencioso) setCarregando(true)
     onFetch(mesaId).then((result) => {
       if (cancelado) return
       if (result.ok) {
         setDetalhe(result.data)
-      } else {
+        setErro('')
+      } else if (!silencioso) {
         setErro(result.message)
       }
       setCarregando(false)
@@ -305,6 +366,13 @@ function MesaDetalheModal({ mesaId, numero, onClose, onFetch, onLiberar }) {
   }
 
   useEffect(carregar, [mesaId, onFetch])
+
+  // Conta em tempo real: enquanto o modal esta aberto, recarrega a comanda sozinho pra
+  // aparecer o que o cliente acabou de pedir pelo QR da mesa.
+  useEffect(() => {
+    const timer = setInterval(() => carregar(true), 5000)
+    return () => clearInterval(timer)
+  }, [mesaId, onFetch])
 
   const handleLiberar = async () => {
     setLiberando(true)
@@ -323,7 +391,7 @@ function MesaDetalheModal({ mesaId, numero, onClose, onFetch, onLiberar }) {
         <div className="modal-head">
           <div>
             <h2>Mesa {numero}</h2>
-            <p>Comanda atual e histórico recente dessa mesa.</p>
+            <p>Consumo da conta atual (atualiza sozinho) e histórico recente.</p>
           </div>
           <button className="btn btn-light" type="button" onClick={onClose}>
             Fechar
@@ -344,7 +412,7 @@ function MesaDetalheModal({ mesaId, numero, onClose, onFetch, onLiberar }) {
             <div>
               <h3 style={{ margin: '0 0 10px' }}>Comanda atual</h3>
               {detalhe.comanda_atual ? (
-                <ComandaBlock comanda={detalhe.comanda_atual} />
+                <ComandaBlock comanda={detalhe.comanda_atual} detalhado />
               ) : (
                 <div className="menu-carrinho-vazio-pro">Nenhuma comanda aberta agora.</div>
               )}
@@ -375,7 +443,9 @@ function QrCodesMesas({ areas }) {
   // O QR guarda o endereco que o navegador esta usando AGORA (window.location.origin).
   // Se for "localhost", o QR so funciona pra quem escanear no proprio PC — o celular
   // de outra pessoa nao consegue chegar em "localhost dele mesmo". Avisa antes de imprimir.
-  const usandoLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+  // 172.16-31.x e o adaptador virtual do WSL/Docker: tambem nao abre no celular.
+  const hostQr = new URL(PUBLIC_ORIGIN).hostname
+  const usandoLocalhost = ['localhost', '127.0.0.1'].includes(hostQr) || /^172\.(1[6-9]|2\d|3[01])\./.test(hostQr)
 
   return (
     <article className="card section-card" id="qrcodes-mesas">
@@ -392,10 +462,10 @@ function QrCodesMesas({ areas }) {
         <div className="notice notice-warning no-print">
           <strong>Esses QR Codes só vão abrir neste computador.</strong>
           <p>
-            Você está acessando o painel por <code>localhost</code> — o QR guarda esse endereço, e o celular de
-            outra pessoa não consegue chegar nele. Acesse o painel pelo IP da rede (ex:{' '}
-            <code>http://{'{SEU-IP}'}:5173/mesas</code>, confira o IP com <code>ipconfig</code>) antes de gerar e
-            imprimir os QR Codes de verdade.
+            O QR está saindo com <code>{hostQr}</code>, um endereço interno deste PC que o celular não alcança.
+            Defina <code>VITE_PUBLIC_APP_URL</code> em <code>frontend/.env.local</code> com o endereço do ngrok, ou
+            acesse o painel pelo IP do Wi-Fi (ex: <code>http://{'{SEU-IP}'}:5173/mesas</code>, confira com{' '}
+            <code>ipconfig</code>) antes de imprimir os QR Codes.
           </p>
         </div>
       )}
@@ -605,7 +675,7 @@ export default function Mesas({
                 {area.tables.map((table) => (
                   <button
                     type="button"
-                    className={`table-card table-${table.status}`}
+                    className={`table-card table-${table.status} ${table.hasNewItems ? 'table-card-novos' : ''}`}
                     key={table.number}
                     onClick={() => onFetchMesaDetalhe && setMesaAberta(table)}
                     style={{ textAlign: 'left', cursor: onFetchMesaDetalhe ? 'pointer' : 'default', font: 'inherit' }}
@@ -614,9 +684,42 @@ export default function Mesas({
                       <strong>Mesa {table.number}</strong>
                       <span className={`badge ${statusMap[table.status].tone}`}>{statusMap[table.status].label}</span>
                     </div>
-                    <p>{table.seats} lugares</p>
-                    <p>Garcom: {table.waiter}</p>
-                    <strong>{table.ticket ? `R$ ${table.ticket.toFixed(2)}` : 'Sem consumo'}</strong>
+                    <p>{table.seats} lugares{table.openedAt ? ` · ocupada desde ${table.openedAt}` : ''}</p>
+                    <p>Cliente: {table.waiter}</p>
+
+                    {(table.orderStatus || table.billRequested || table.hasNewItems) && (
+                      <div className="table-card-badges">
+                        {table.orderNumber && <span className="badge badge-muted">Pedido #{table.orderNumber}</span>}
+                        {table.billRequested ? (
+                          <span className="badge badge-sun">Conta pedida</span>
+                        ) : (
+                          table.orderStatus && (
+                            <span className={`badge ${pedidoStatusMap[table.orderStatus]?.tone || 'badge-muted'}`}>
+                              {pedidoStatusMap[table.orderStatus]?.label || table.orderStatus}
+                            </span>
+                          )
+                        )}
+                        {table.hasNewItems && (
+                          <span className="badge badge-red badge-blink">+ Novo pedido · {table.lastAddedAt}</span>
+                        )}
+                      </div>
+                    )}
+
+                    {table.items?.length > 0 && (
+                      <ul className="table-card-itens">
+                        {table.items.slice(0, MAX_ITENS_CARD).map((item) => (
+                          <li key={`${item.id_produto}-${item.preco}`}>
+                            <span>{item.qty}x {item.nome}</span>
+                            <span>{formatMoney(item.subtotal)}</span>
+                          </li>
+                        ))}
+                        {table.items.length > MAX_ITENS_CARD && (
+                          <li className="table-card-itens-mais">+ {table.items.length - MAX_ITENS_CARD} outros itens</li>
+                        )}
+                      </ul>
+                    )}
+
+                    <strong>{table.ticket ? `Total: ${formatMoney(table.ticket)}` : 'Sem consumo'}</strong>
                   </button>
                 ))}
               </div>

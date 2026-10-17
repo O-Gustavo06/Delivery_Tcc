@@ -1,5 +1,36 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
+import './Pedidos.css'
+
+// Pedido da mesa acumula varias rodadas (o mesmo prato pode vir em linhas diferentes).
+// No card mostra uma linha por prato+observacao, com a quantidade somada e quanto dela e novo.
+function agruparItens(items) {
+  const grupos = new Map()
+  items.forEach((item) => {
+    const chave = `${item.name}|${item.price}|${item.note || ''}`
+    const atual = grupos.get(chave) || { name: item.name, note: item.note, qty: 0, newQty: 0 }
+    atual.qty += item.qty
+    if (item.is_new) atual.newQty += item.qty
+    grupos.set(chave, atual)
+  })
+  return [...grupos.values()]
+}
+
+const totalDeItens = (order) => order.items.reduce((soma, item) => soma + item.qty, 0)
+
+const ORDER_STAGES = [
+  { id: 'new', title: 'Novos', description: 'Aguardando aceite', statuses: ['novo'] },
+  {
+    id: 'kitchen',
+    title: 'Cozinha',
+    description: 'Aguardando e em preparo',
+    statuses: ['enviado_cozinha', 'em_preparo'],
+  },
+  { id: 'ready', title: 'Prontos', description: 'Aguardando retirada ou saída', statuses: ['pronto'] },
+  { id: 'delivery', title: 'Em entrega', description: 'Com o entregador', statuses: ['saiu_entrega'] },
+]
+
+const CLOSED_STATUSES = ['entregue', 'cancelado']
 
 function PedidoQrModal({ order, onClose }) {
   const [qrDataUrl, setQrDataUrl] = useState('')
@@ -43,11 +74,40 @@ export default function Pedidos({ orders, filters, setFilters, statusLabels, sta
   const [recusandoId, setRecusandoId] = useState(null)
   const [motivoRecusa, setMotivoRecusa] = useState('')
   const [qrAberto, setQrAberto] = useState(null)
+  const [piscando, setPiscando] = useState(() => new Set())
+  const qtdAnterior = useRef(null)
+
+  // Quando a atualizacao automatica traz mais itens num pedido que ja estava na tela (nova
+  // rodada da mesa), o card pisca por alguns segundos pra chamar atencao.
+  useEffect(() => {
+    const atual = new Map(orders.map((order) => [order.id, totalDeItens(order)]))
+    const anterior = qtdAnterior.current
+    qtdAnterior.current = atual
+    if (!anterior) return undefined
+
+    const cresceram = orders.filter((order) => anterior.has(order.id) && atual.get(order.id) > anterior.get(order.id))
+    if (cresceram.length === 0) return undefined
+
+    setPiscando((prev) => new Set([...prev, ...cresceram.map((order) => order.id)]))
+    const timer = setTimeout(() => {
+      setPiscando((prev) => {
+        const next = new Set(prev)
+        cresceram.forEach((order) => next.delete(order.id))
+        return next
+      })
+    }, 6000)
+    return () => clearTimeout(timer)
+  }, [orders])
+
   const filtered = useMemo(() => {
     const search = filters.search.trim().toLowerCase()
 
     return orders.filter((order) => {
-      const matchesStatus = filters.status === 'all' || order.status === filters.status
+      const matchesStatus =
+        filters.status === 'all' ||
+        (filters.status === 'closed'
+          ? CLOSED_STATUSES.includes(order.status)
+          : order.status === filters.status)
       const matchesType = filters.type === 'all' || order.type === filters.type
       const matchesSearch =
         !search ||
@@ -87,7 +147,8 @@ export default function Pedidos({ orders, filters, setFilters, statusLabels, sta
   const getActions = (order) => {
     const actions = []
 
-    if (order.status === 'novo' && order.channel === 'online') {
+    // Pedido que o proprio cliente fez (cardapio online ou presencial) precisa ser aceito antes.
+    if (order.status === 'novo' && (order.channel === 'online' || order.channel === 'presencial')) {
       actions.push({ label: 'Aceitar pedido', action: 'accept-online', primary: true })
       actions.push({ label: 'Recusar', action: 'reject-online' })
       return actions
@@ -162,40 +223,43 @@ export default function Pedidos({ orders, filters, setFilters, statusLabels, sta
     setMotivoRecusa('')
   }
 
+  const visibleStages =
+    filters.status === 'all'
+      ? ORDER_STAGES
+      : ORDER_STAGES.filter((stage) => stage.statuses.includes(filters.status))
+
   return (
-    <>
-      <section className="cards">
-        <div className="card metric">
+    <div className="orders-page">
+      <section className="cards orders-stats" aria-label="Resumo de pedidos">
+        <div className="orders-stat">
           <div>
             <span>Total hoje</span>
             <strong>{counts.total}</strong>
+            <small>{counts.novo} novos</small>
           </div>
-          <div className="metric-icon badge-orange">{counts.novo}</div>
         </div>
-        <div className="card metric">
+        <div className="orders-stat">
           <div>
             <span>Cozinha</span>
             <strong>{counts.enviado_cozinha + counts.em_preparo}</strong>
+            <small>{counts.enviado_cozinha} aguardando · {counts.em_preparo} preparando</small>
           </div>
-          <div className="metric-icon badge-blue">{counts.em_preparo}</div>
         </div>
-        <div className="card metric">
+        <div className="orders-stat">
           <div>
             <span>Prontos</span>
             <strong>{counts.pronto}</strong>
           </div>
-          <div className="metric-icon badge-green">{counts.pronto}</div>
         </div>
-        <div className="card metric">
+        <div className="orders-stat">
           <div>
             <span>Entrega</span>
             <strong>{counts.saiu_entrega}</strong>
           </div>
-          <div className="metric-icon badge-lime">{counts.saiu_entrega}</div>
         </div>
       </section>
 
-      <section className="filters card">
+      <section className="filters orders-filters">
         <div className="filter-group">
           <label>Busca</label>
           <input
@@ -224,6 +288,7 @@ export default function Pedidos({ orders, filters, setFilters, statusLabels, sta
             }
           >
             <option value="all">Todos</option>
+            <option value="closed">Encerrados</option>
             {Object.entries(statusLabels).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
@@ -262,127 +327,241 @@ export default function Pedidos({ orders, filters, setFilters, statusLabels, sta
 
       <section className="status-tabs">
         {[
-          { label: 'Todos', value: 'all' },
-          { label: 'Novos', value: 'novo' },
-          { label: 'Cozinha', value: 'enviado_cozinha' },
-          { label: 'Preparando', value: 'em_preparo' },
-          { label: 'Prontos', value: 'pronto' },
-          { label: 'Entrega', value: 'saiu_entrega' },
+          { label: 'Todos', value: 'all', count: counts.total },
+          { label: 'Novos', value: 'novo', count: counts.novo },
+          { label: 'Cozinha', value: 'enviado_cozinha', count: counts.enviado_cozinha },
+          { label: 'Preparando', value: 'em_preparo', count: counts.em_preparo },
+          { label: 'Prontos', value: 'pronto', count: counts.pronto },
+          { label: 'Entrega', value: 'saiu_entrega', count: counts.saiu_entrega },
+          { label: 'Encerrados', value: 'closed', count: counts.entregue + counts.cancelado },
         ].map((tab) => (
           <button
             key={tab.value}
-            className={`tab ${filters.status === tab.value ? 'active' : ''}`}
+            className={`tab ${filters.status === tab.value || (tab.value === 'closed' && CLOSED_STATUSES.includes(filters.status)) ? 'active' : ''}`}
             data-tab={tab.value}
             type="button"
             onClick={() => setFilters((prev) => ({ ...prev, status: tab.value }))}
           >
             {tab.label}
+            <span className="orders-tab-count">{tab.count}</span>
           </button>
         ))}
       </section>
 
-      <section className="orders">
-        {filtered.map((order, index) => {
-          const nextActions = getActions(order)
+      {visibleStages.length > 0 && (
+        <section
+          className={`orders-board ${visibleStages.length === 1 ? 'orders-board-focused' : ''}`}
+          aria-label="Pedidos por etapa"
+        >
+          {visibleStages.map((stage) => {
+          const stageOrders = filtered
+            .filter((order) => stage.statuses.includes(order.status))
+            .sort((left, right) => Number(right.hasNewItems) - Number(left.hasNewItems) || right.number - left.number)
+          const stageCount = stageOrders.length
+
           return (
-            <article className="card order-card fade-in" style={{ '--i': index }} key={order.id}>
-              <div className="order-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span className="order-number">#{order.number}</span>
-                  {order.type === 'mesa' && order.tableNumber != null && (
-                    <span className="badge badge-green">Mesa {order.tableNumber}</span>
-                  )}
-                  {order.type === 'mesa' && order.paymentStatus === 'APROVADO' && (
-                    <span className="badge badge-green">✓ PAGO</span>
-                  )}
-                  {order.type === 'delivery' && order.deliveryNumber != null && (
-                    <span className="badge badge-blue">Delivery #{order.deliveryNumber}</span>
-                  )}
-                  {order.channel === 'online' && <span className="badge badge-green">Online</span>}
-                  <span className={`badge ${statusTone[order.status]} ${order.status === 'saiu_entrega' ? 'badge-blink' : ''}`}>
-                    {statusLabels[order.status]}
-                  </span>
-                </div>
-                <span className="order-time">{order.createdAt}</span>
-              </div>
-              <div className="order-body">
+            <section
+              className={`orders-lane orders-lane-${stage.id}`}
+              key={stage.id}
+              aria-labelledby={`orders-lane-${stage.id}`}
+            >
+              <header className="orders-lane-head">
                 <div>
-                  <h3>{order.customerName}</h3>
-                  <p>{order.type === 'mesa' ? `Mesa ${order.tableNumber}` : order.address}</p>
-                  <ul>
-                    {order.items.map((item, itemIndex) => (
-                      <li key={`${item.name}-${itemIndex}`}>
-                        {item.qty}x {item.name}
-                        {item.note && <em className="note-blink" style={{ fontStyle: 'normal' }}> — {item.note}</em>}
-                      </li>
-                    ))}
-                  </ul>
-                  {order.status === 'cancelado' && order.motivoCancelamento && (
-                    <p style={{ color: 'var(--danger)', fontSize: 12.5, marginTop: 6 }}>
-                      Recusado: {order.motivoCancelamento}
-                    </p>
-                  )}
-                  {order.note && (
-                    <p style={{ fontSize: 12.5, marginTop: 6 }}>
-                      Obs: <span className="note-blink">{order.note}</span>
-                    </p>
-                  )}
-                  {order.avaliacao && (
-                    <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 6 }}>
-                      Avaliação do cliente: {'⭐'.repeat(order.avaliacao.nota)}
-                      {order.avaliacao.comentario && ` — "${order.avaliacao.comentario}"`}
-                    </p>
-                  )}
+                  <h2 id={`orders-lane-${stage.id}`}>{stage.title}</h2>
+                  <p>{stage.description}</p>
                 </div>
-                <div className="order-total">
-                  <span>Total</span>
-                  <strong>{formatMoney(order.total)}</strong>
-                  <span className="badge badge-muted">{order.type}</span>
-                </div>
-              </div>
-              {recusandoId === order.id ? (
-                <div className="confirm-box">
-                  <input
-                    type="text"
-                    placeholder="Motivo da recusa (ex: fora da area de entrega)"
-                    value={motivoRecusa}
-                    onChange={(event) => setMotivoRecusa(event.target.value)}
-                    autoFocus
-                  />
-                  <div className="order-actions">
-                    <button className="btn btn-primary" type="button" onClick={() => confirmarRecusa(order.id)}>
-                      Confirmar recusa
-                    </button>
-                    <button className="btn btn-light" type="button" onClick={() => setRecusandoId(null)}>
-                      Voltar
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="order-actions">
-                  {order.type === 'delivery' && order.codigoQr && (
-                    <button className="btn btn-light" type="button" onClick={() => setQrAberto(order)}>
-                      Ver QR
-                    </button>
-                  )}
-                  {nextActions.map((action) => (
-                    <button
-                      key={action.action}
-                      className={`btn ${action.primary ? 'btn-primary' : 'btn-light'}`}
-                      type="button"
-                      onClick={() => handleAction(order.id, action.action)}
+                <span className="orders-lane-count" aria-label={`${stageCount} pedidos`}>
+                  {stageCount}
+                </span>
+              </header>
+              <div className="orders-lane-list">
+                {stageOrders.map((order, index) => {
+                  const nextActions = getActions(order)
+                  return (
+                    <article
+                      className={`order-card fade-in order-card-${stage.id} ${piscando.has(order.id) ? 'order-card-flash' : ''} ${order.hasNewItems ? 'order-card-novos' : ''}`}
+                      data-status={order.status}
+                      style={{ '--i': index }}
+                      key={order.id}
                     >
-                      {action.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </article>
+                      <div className="order-header">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span className="order-number">#{order.number}</span>
+                          {order.type === 'mesa' && order.tableNumber != null && (
+                            <span className="badge badge-green">Mesa {order.tableNumber}</span>
+                          )}
+                          {order.type === 'mesa' && order.paymentStatus === 'APROVADO' && (
+                            <span className="badge badge-green">✓ PAGO</span>
+                          )}
+                          {order.type === 'delivery' && order.deliveryNumber != null && (
+                            <span className="badge badge-blue">Delivery #{order.deliveryNumber}</span>
+                          )}
+                          {order.channel === 'online' && <span className="badge badge-green">Online</span>}
+                          {order.channel === 'presencial' && <span className="badge badge-blue">Presencial</span>}
+                          <span
+                            className={`badge ${statusTone[order.status]} ${order.status === 'saiu_entrega' ? 'badge-blink' : ''}`}
+                          >
+                            {statusLabels[order.status]}
+                          </span>
+                          {order.hasNewItems && (
+                            <span className="badge badge-red badge-blink">+ Novos itens · {order.lastAddedAt}</span>
+                          )}
+                        </div>
+                        <span className="order-time">{order.createdAt}</span>
+                      </div>
+                      <div className="order-body">
+                        <div>
+                          <h3>{order.customerName}</h3>
+                          <p>{order.type === 'mesa' ? `Mesa ${order.tableNumber}` : order.address}</p>
+                          <ul>
+                            {agruparItens(order.items).map((item, itemIndex) => (
+                              <li
+                                key={`${item.name}-${itemIndex}`}
+                                className={item.newQty > 0 ? 'order-item-novo' : undefined}
+                              >
+                                {item.qty}x {item.name}
+                                {item.newQty > 0 && <span className="order-item-tag">+{item.newQty} novo</span>}
+                                {item.note && (
+                                  <em className="note-blink" style={{ fontStyle: 'normal' }}>
+                                    {' '}
+                                    — {item.note}
+                                  </em>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                          {order.type === 'mesa' && order.additions > 0 && (
+                            <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 6 }}>
+                              Consumo acumulado da mesa · {order.additions + 1} rodadas de pedido
+                            </p>
+                          )}
+                          {order.status === 'cancelado' && order.motivoCancelamento && (
+                            <p style={{ color: 'var(--danger)', fontSize: 12.5, marginTop: 6 }}>
+                              Recusado: {order.motivoCancelamento}
+                            </p>
+                          )}
+                          {order.note && (
+                            <p style={{ fontSize: 12.5, marginTop: 6 }}>
+                              Obs: <span className="note-blink">{order.note}</span>
+                            </p>
+                          )}
+                          {order.avaliacao && (
+                            <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 6 }}>
+                              Avaliação do cliente: {'⭐'.repeat(order.avaliacao.nota)}
+                              {order.avaliacao.comentario && ` — "${order.avaliacao.comentario}"`}
+                            </p>
+                          )}
+                        </div>
+                        <div className="order-total">
+                          <span>Total</span>
+                          <strong>{formatMoney(order.total)}</strong>
+                          <span className="badge badge-muted">{order.type}</span>
+                        </div>
+                      </div>
+                      {recusandoId === order.id ? (
+                        <div className="confirm-box">
+                          <input
+                            type="text"
+                            placeholder="Motivo da recusa (ex: fora da area de entrega)"
+                            value={motivoRecusa}
+                            onChange={(event) => setMotivoRecusa(event.target.value)}
+                            autoFocus
+                          />
+                          <div className="order-actions">
+                            <button className="btn btn-primary" type="button" onClick={() => confirmarRecusa(order.id)}>
+                              Confirmar recusa
+                            </button>
+                            <button className="btn btn-light" type="button" onClick={() => setRecusandoId(null)}>
+                              Voltar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="order-actions">
+                          {order.type === 'delivery' && order.codigoQr && (
+                            <button className="btn btn-light" type="button" onClick={() => setQrAberto(order)}>
+                              Ver QR
+                            </button>
+                          )}
+                          {nextActions.map((action) => (
+                            <button
+                              key={action.action}
+                              className={`btn ${action.primary ? 'btn-primary' : 'btn-light'}`}
+                              type="button"
+                              onClick={() => handleAction(order.id, action.action)}
+                            >
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  )
+                })}
+                {stageOrders.length === 0 && filtered.length > 0 && (
+                  <p className="orders-lane-empty">Nenhum pedido nesta etapa.</p>
+                )}
+              </div>
+            </section>
           )
-        })}
-      </section>
+          })}
+        </section>
+      )}
+
+      {filtered.some((order) => CLOSED_STATUSES.includes(order.status)) && (
+        <details
+          className="orders-closed"
+          open={filters.status === 'closed' || CLOSED_STATUSES.includes(filters.status) || undefined}
+        >
+          <summary>
+            <span>Pedidos encerrados</span>
+            <span className="orders-lane-count">
+              {filtered.filter((order) => CLOSED_STATUSES.includes(order.status)).length}
+            </span>
+          </summary>
+          <div className="orders-closed-list">
+            {filtered
+              .filter((order) => CLOSED_STATUSES.includes(order.status))
+              .sort((left, right) => right.number - left.number)
+              .map((order, index) => (
+                <article
+                  className="order-card order-card-closed"
+                  data-status={order.status}
+                  key={order.id}
+                  style={{ '--i': index }}
+                >
+                  <div className="order-header">
+                    <div className="orders-closed-title">
+                      <span className="order-number">#{order.number}</span>
+                      <span className={`badge ${statusTone[order.status]}`}>{statusLabels[order.status]}</span>
+                    </div>
+                    <span className="order-time">{order.createdAt}</span>
+                  </div>
+                  <div className="order-body">
+                    <div>
+                      <h3>{order.customerName}</h3>
+                      <p
+                        title={order.type === 'mesa' ? `Mesa ${order.tableNumber}` : order.address}
+                      >
+                        {order.type === 'mesa' ? `Mesa ${order.tableNumber}` : order.address}
+                      </p>
+                    </div>
+                    <div className="order-total">
+                      <span>Total</span>
+                      <strong>{formatMoney(order.total)}</strong>
+                    </div>
+                  </div>
+                </article>
+              ))}
+          </div>
+        </details>
+      )}
+
+      {filtered.length === 0 && (
+        <p className="orders-empty">Nenhum pedido encontrado com esses filtros.</p>
+      )}
 
       {qrAberto && <PedidoQrModal order={qrAberto} onClose={() => setQrAberto(null)} />}
-    </>
+    </div>
   )
 }

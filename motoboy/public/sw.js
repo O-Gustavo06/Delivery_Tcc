@@ -1,5 +1,6 @@
-const CACHE_NAME = 'motoboy-shell-v2'
-const APP_SHELL = ['/login', '/favicon.png', '/manifest.webmanifest']
+const CACHE_NAME = 'motoboy-shell-v3'
+// Caminhos relativos ao proprio sw.js - o app roda em /motoboy/, nao na raiz.
+const APP_SHELL = ['./', './favicon.png', './manifest.webmanifest']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

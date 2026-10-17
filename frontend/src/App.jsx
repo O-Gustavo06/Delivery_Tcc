@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import Login from './pages/Login.jsx'
 import Pedidos from './pages/Pedidos.jsx'
 import NovoPedidoModal from './pages/NovoPedidoModal.jsx'
@@ -16,6 +16,10 @@ import Pedidos_Ifood from './pages/Pedidos_Ifood.jsx'
 import WhatsApp from './pages/whatsApp.jsx'
 import CardapioPublico from './pages_delivery/CardapioPublico.jsx'
 import MesaPublica from './pages_delivery/MesaPublica.jsx'
+import './CentralScreens.css'
+// Lazy: o CSS do cardapio presencial mexe no <html>/fontes e o video pesa ~1 MB - so carrega
+// quando alguem abre o cardapio presencial, sem entrar no bundle do painel admin.
+const CardapioPresencial = lazy(() => import('./pages_delivery/CardapioPresencial/CardapioPresencial.jsx'))
 import logo from './assets/logo.png'
 import { resolveApiBase } from './utils/apiBase'
 
@@ -51,7 +55,10 @@ const statusTone = {
 const routes = [
   { path: '/painel', label: 'Painel', code: 'PN' },
   { path: '/pedidos', label: 'Pedidos', code: 'PD' },
+  { path: '/cardapio/pedidos', label: 'Pedidos Online', code: 'PO' },
   { path: '/cardapio', label: 'Cardapio', code: 'CD' },
+  { path: '/cardapio/presencial', label: 'Cardápio Presencial', code: 'CPR' },
+  { path: '/motoboy/', label: 'Motoboy', code: 'MB' },
   { path: '/cozinha', label: 'Cozinha', code: 'CZ' },
   { path: '/mesas', label: 'Mesas', code: 'MS' },
   { path: '/entrega', label: 'Entrega', code: 'EN' },
@@ -166,6 +173,9 @@ const mapApiOrder = (order) => ({
   codigoQr: order.codigo_qr ?? null,
   total: Number(order.total ?? 0),
   items: Array.isArray(order.items) ? order.items : [],
+  additions: Number(order.additions ?? 0),
+  lastAddedAt: order.last_added_at ?? null,
+  hasNewItems: Boolean(order.has_new_items),
   createdAt: formatTime(String(order.created_at ?? order.createdAt ?? '')),
   avaliacao: order.avaliacao ?? null,
 })
@@ -1265,7 +1275,7 @@ export default function App() {
 
       void fetchOrdersFromApi()
       if (route === '/painel') void fetchDashboardFromApi()
-    }, 8000)
+    }, route === '/mesas' ? 5000 : 8000) // mesas: conta acompanhada em tempo real pelo QR
 
     return () => clearInterval(timer)
   }, [apiEnabled, isAuthenticated, route, fetchOrdersFromApi, fetchDashboardFromApi, fetchComandasPendentes])
@@ -1285,12 +1295,16 @@ export default function App() {
     return current?.label || 'Pedidos'
   }, [route])
 
-  const isPublicMenuRoute = route.startsWith('/cardapio/')
+  const isPublicMenuRoute = route.startsWith('/cardapio/') && route !== '/cardapio/presencial'
   const isPublicMesaRoute = route.startsWith('/mesa/')
+  const isPresencialRoute =
+    route === '/cardapio/presencial' || route === '/presencial' || route.startsWith('/presencial/')
 
   // Aba do navegador so mostrava "Restaurante" em toda tela - agora reflete onde voce esta.
   useEffect(() => {
-    if (isPublicMesaRoute) {
+    if (isPresencialRoute) {
+      document.title = 'Cardápio · Restaurante'
+    } else if (isPublicMesaRoute) {
       document.title = 'Peça pela mesa · Restaurante'
     } else if (isPublicMenuRoute) {
       document.title = 'Cardápio Online · Restaurante'
@@ -1299,14 +1313,14 @@ export default function App() {
     } else {
       document.title = `${pageTitle} · Restaurante`
     }
-  }, [isPublicMesaRoute, isPublicMenuRoute, isAuthenticated, pageTitle])
+  }, [isPresencialRoute, isPublicMesaRoute, isPublicMenuRoute, isAuthenticated, pageTitle])
 
   const pageSubtitle = useMemo(() => {
     const subtitles = {
       '/painel': 'Visao executiva da operacao em tempo real',
       '/pedidos': 'Controle central de pedidos',
       '/cardapio': 'Itens, precos e categorias do cardapio',
-      '/cozinha': 'Fila de preparo e expedicao da cozinha',
+      '/cozinha': 'Fila de preparo e expedição da cozinha',
       '/mesas': 'Ocupacao, reservas e fila de espera do salao',
       '/entrega': 'Rotas, motoboys e monitoramento de entregas',
       '/usuarios': 'Gestao de perfis e acessos internos',
@@ -1320,6 +1334,14 @@ export default function App() {
 
     return subtitles[route] || 'Controle central de pedidos'
   }, [route])
+
+  if (isPresencialRoute) {
+    return (
+      <Suspense fallback={null}>
+        <CardapioPresencial />
+      </Suspense>
+    )
+  }
 
   if (isPublicMenuRoute) {
     return (
@@ -1407,7 +1429,9 @@ export default function App() {
         </div>
       </aside>
       <div className="app-main">
-        <header className="topbar">
+        <header
+          className={`topbar topbar-flat${route === '/painel' ? ' topbar-dashboard' : route === '/pedidos' ? ' topbar-orders' : ''}`}
+        >
           <div className="topbar-left">
             <span className="pulse"></span>
             <div>
@@ -1429,7 +1453,18 @@ export default function App() {
             <select
               className="route-select"
               value={route}
-              onChange={(event) => navigate(event.target.value)}
+              onChange={(event) => {
+                const target = event.target.value
+                if (target.startsWith('/cardapio/') || target === '/motoboy/') {
+                  const destinationUrl = new URL(target, window.location.href)
+                  if (target === '/motoboy/' && !window.location.hostname.includes('ngrok')) {
+                    destinationUrl.port = '5174'
+                  }
+                  window.open(destinationUrl.href, '_blank', 'noopener,noreferrer')
+                  return
+                }
+                navigate(target)
+              }}
               aria-label="Ir para pagina"
             >
               {routes.map((routeItem) => (

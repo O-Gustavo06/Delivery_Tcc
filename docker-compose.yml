@@ -22,6 +22,8 @@ services:
       context: ./backend
     container_name: restaurante_app
     restart: unless-stopped
+    environment:
+      PHP_CLI_SERVER_WORKERS: ${PHP_CLI_SERVER_WORKERS:-8}
     depends_on:
       db:
         condition: service_healthy
