@@ -97,8 +97,9 @@ export default function NovoPedidoModal({ onCreate, onClose }) {
       payload.cidade = cidade
       payload.uf = uf
       payload.channel = channel
-      if (customerPhone.trim()) payload.customer_phone = customerPhone.trim()
     }
+
+    if (customerPhone.trim()) payload.customer_phone = customerPhone.trim()
 
     payload.payment_method = paymentMethod
     if (paymentMethod === 'dinheiro' && changeFor) {
@@ -157,6 +158,18 @@ export default function NovoPedidoModal({ onCreate, onClose }) {
               <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} required />
             </div>
 
+            <div className="filter-group">
+              <label>Telefone do cliente{type === 'delivery' && channel !== 'loja' ? ' (obrigatório)' : ' (opcional)'}</label>
+              <input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={customerPhone}
+                onChange={(event) => setCustomerPhone(event.target.value)}
+                onBlur={(event) => buscarNomePeloTelefone(event.target.value)}
+              />
+            </div>
+
             {type === 'mesa' && (
               <div className="filter-group">
                 <label>Numero da mesa</label>
@@ -196,14 +209,6 @@ export default function NovoPedidoModal({ onCreate, onClose }) {
                 />
               </div>
 
-              <div className="filter-group">
-                <label>Telefone do cliente{channel !== 'loja' ? ' (obrigatorio)' : ' (opcional)'}</label>
-                <input
-                  value={customerPhone}
-                  onChange={(event) => setCustomerPhone(event.target.value)}
-                  onBlur={(event) => buscarNomePeloTelefone(event.target.value)}
-                />
-              </div>
             </>
           )}
 

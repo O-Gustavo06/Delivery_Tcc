@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import EnderecoPorCep from './EnderecoPorCep.jsx'
 import { resolveApiBase, resolveAssetUrl } from '../utils/apiBase'
+import { aplicarPromocoes } from '../utils/promotions'
+import usePromotionQuote from '../hooks/usePromotionQuote'
 
 const API_BASE = resolveApiBase()
 const SESSION_KEY = 'pedido_online_sessao'
@@ -140,6 +142,8 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
   const [busca, setBusca] = useState('')
   const [categoriaSelecionada, setCategoriaSelecionada] = useState('Todos')
   const [carrinho, setCarrinho] = useState({})
+  const [codigoCupom, setCodigoCupom] = useState('')
+  const [cupomAplicado, setCupomAplicado] = useState('')
 
   const [dados, setDados] = useState(() => {
     try {
@@ -309,29 +313,56 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
     return ['Todos', ...new Set(lista)]
   }, [cardapio])
 
+  const produtosComPreco = useMemo(
+    () => cardapio
+      ? aplicarPromocoes(cardapio.produtos, cardapio.promocoes || [], carrinho)
+      : [],
+    [cardapio, carrinho],
+  )
+
   const produtosFiltrados = useMemo(() => {
     if (!cardapio) return []
-    return cardapio.produtos.filter((produto) => {
+    return produtosComPreco.filter((produto) => {
       const texto = `${produto.nome} ${produto.descricao || ''} ${produto.categoria || ''}`.toLowerCase()
       const buscaCombina = texto.includes(busca.toLowerCase())
       const categoriaCombina = categoriaSelecionada === 'Todos' || produto.categoria === categoriaSelecionada
       return buscaCombina && categoriaCombina
     })
-  }, [cardapio, busca, categoriaSelecionada])
+  }, [cardapio, produtosComPreco, busca, categoriaSelecionada])
 
   const itensCarrinho = useMemo(() => {
     if (!cardapio) return []
     return Object.entries(carrinho)
       .filter(([, qty]) => qty > 0)
       .map(([id, qty]) => {
-        const produto = cardapio.produtos.find((p) => String(p.id) === id)
+        const produto = produtosComPreco.find((p) => String(p.id) === id)
         return produto ? { ...produto, qty } : null
       })
       .filter(Boolean)
-  }, [carrinho, cardapio])
+  }, [carrinho, produtosComPreco])
 
   const totalItensCarrinho = itensCarrinho.reduce((soma, item) => soma + item.qty, 0)
   const subtotalCarrinho = itensCarrinho.reduce((soma, item) => soma + item.preco * item.qty, 0)
+  const subtotalOriginalCarrinho = itensCarrinho.reduce((soma, item) => soma + item.precoOriginal * item.qty, 0)
+  const itensParaCotacao = useMemo(
+    () => itensCarrinho.map((item) => ({ id_produto: item.id, qty: item.qty })),
+    [itensCarrinho],
+  )
+  const { quote: cotacaoCupom, error: erroCupom, loading: validandoCupom } = usePromotionQuote({
+    code: cupomAplicado,
+    items: itensParaCotacao,
+    phone: dados.telefone,
+    enabled: itensParaCotacao.length > 0,
+  })
+  const itensCarrinhoCotados = useMemo(
+    () => cotacaoCupom?.items?.length === itensCarrinho.length
+      ? itensCarrinho.map((item, index) => ({ ...item, preco: cotacaoCupom.items[index].unit_price }))
+      : itensCarrinho,
+    [cotacaoCupom, itensCarrinho],
+  )
+  const subtotalFinal = cotacaoCupom?.subtotal ?? subtotalCarrinho
+  const descontoAutomatico = cotacaoCupom?.automatic_discount ?? Math.max(0, subtotalOriginalCarrinho - subtotalCarrinho)
+  const descontoCupom = cotacaoCupom?.coupon_discount ?? 0
   const carrinhoRef = useRef(null)
   const taxaEntregaPadrao = cardapio?.empresa?.taxa_entrega_padrao ?? TAXA_ENTREGA_FALLBACK
   const taxaEntrega = itensCarrinho.length > 0 && tipoEntrega === 'delivery' ? taxaEntregaPadrao : 0
@@ -433,6 +464,7 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
           numero: formaPagamento === 'cartao_online' ? numero : undefined,
           change_for: formaPagamento === 'dinheiro' && trocoPara ? Number(trocoPara) : undefined,
           note: observacao.trim() || undefined,
+          coupon_code: cupomAplicado || undefined,
           items: itensCarrinho.map((item) => ({ id_produto: item.id, qty: item.qty })),
         }),
       })
@@ -440,7 +472,8 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) {
         if (response.status === 422) window.localStorage.removeItem(IDEMPOTENCY_KEY)
-        setErroEnvio(payload.message || 'Nao foi possivel enviar o pedido. Confira os dados.')
+        const validationError = Object.values(payload.errors || {}).flat()[0]
+        setErroEnvio(validationError || payload.message || 'Nao foi possivel enviar o pedido. Confira os dados.')
         return
       }
 
@@ -464,6 +497,8 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
       })
       setCarrinho({})
       setObservacao('')
+      setCodigoCupom('')
+      setCupomAplicado('')
     } catch (error) {
       console.error('Falha ao confirmar o envio do pedido.', error)
       setErroEnvio('Não foi possível confirmar o envio. Tente novamente; a mesma tentativa será reutilizada para evitar duplicidade.')
@@ -815,7 +850,14 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
                       <h3>{produto.nome}</h3>
                       {produto.descricao && <p>{produto.descricao}</p>}
                       <div className="menu-produto-rodape-pro">
-                        <strong>{formatarPreco(produto.preco)}</strong>
+                        <strong>
+                          {produto.precoOriginal > produto.preco && (
+                            <del style={{ display: 'block', color: 'var(--muted)', fontSize: 12, fontWeight: 400 }}>
+                              {formatarPreco(produto.precoOriginal)}
+                            </del>
+                          )}
+                          {formatarPreco(produto.preco)}
+                        </strong>
                         <button type="button" onClick={() => adicionarAoCarrinho(produto.id)}>
                           Adicionar ao pedido
                         </button>
@@ -838,12 +880,15 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
             <p className="menu-carrinho-vazio-pro">Seu pedido está vazio.</p>
           ) : (
             <div className="menu-carrinho-itens-pro">
-              {itensCarrinho.map((item) => (
+              {itensCarrinhoCotados.map((item) => (
                 <div className="menu-carrinho-item-pro" key={item.id}>
                   <div>
                     <strong>{item.nome}</strong>
                     <br />
-                    <small>{formatarPreco(item.preco)} cada</small>
+                    <small>
+                      {item.precoOriginal > item.preco && <del>{formatarPreco(item.precoOriginal)} · </del>}
+                      {formatarPreco(item.preco)} cada
+                    </small>
                   </div>
                   <div className="menu-quantidade-pro">
                     <button type="button" onClick={() => removerDoCarrinho(item.id)} aria-label="Remover um">
@@ -862,8 +907,20 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
           <div className="menu-resumo-pro checkout-secao">
             <div>
               <span>Subtotal</span>
-              <strong>{formatarPreco(subtotalCarrinho)}</strong>
+              <strong>{formatarPreco(cotacaoCupom?.subtotal_original ?? subtotalOriginalCarrinho)}</strong>
             </div>
+            {descontoAutomatico > 0 && (
+              <div>
+                <span>Promoções nos produtos</span>
+                <strong>−{formatarPreco(descontoAutomatico)}</strong>
+              </div>
+            )}
+            {cotacaoCupom && descontoCupom > 0 && (
+              <div>
+                <span>Desconto do cupom</span>
+                <strong>−{formatarPreco(descontoCupom)}</strong>
+              </div>
+            )}
             <div>
               <span>{tipoEntrega === 'retirada' ? 'Retirada no balcão' : 'Entrega'}</span>
               <strong>{formatarPreco(taxaEntrega)}</strong>
@@ -875,9 +932,42 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
             </small>
           )}
 
+          {itensCarrinho.length > 0 && (
+            <div className="checkout-secao" style={{ display: 'grid', gap: 8 }}>
+              <label htmlFor="cupomPedido" style={{ fontWeight: 600 }}>Cupom de desconto</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  id="cupomPedido"
+                  type="text"
+                  placeholder="Digite seu cupom"
+                  value={codigoCupom}
+                  onChange={(event) => setCodigoCupom(event.target.value.toUpperCase())}
+                  disabled={Boolean(cupomAplicado)}
+                />
+                {cupomAplicado ? (
+                  <button type="button" className="btn btn-light" onClick={() => { setCupomAplicado(''); setCodigoCupom('') }}>
+                    Remover
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-light"
+                    onClick={() => setCupomAplicado(codigoCupom.trim())}
+                    disabled={!codigoCupom.trim() || itensCarrinho.length === 0}
+                  >
+                    Aplicar
+                  </button>
+                )}
+              </div>
+              {validandoCupom && <small>{cupomAplicado ? 'Validando cupom...' : 'Atualizando valores...'}</small>}
+              {erroCupom && <small style={{ color: 'var(--danger)' }}>{erroCupom}</small>}
+              {cupomAplicado && cotacaoCupom && !erroCupom && <small style={{ color: 'var(--success)' }}>Cupom aplicado: economize {formatarPreco(descontoCupom)}.</small>}
+            </div>
+          )}
+
           <div className="menu-total-pro" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>Total</span>
-            <strong>{formatarPreco(subtotalCarrinho + taxaEntrega)}</strong>
+            <strong>{formatarPreco(subtotalFinal + taxaEntrega)}</strong>
           </div>
 
           <form className="menu-dados-pro checkout-secao" onSubmit={fazerPedido}>

@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\Delivery;
 
 use App\Http\Controllers\Controller;
 use App\Models\Avaliacao;
-use App\Models\Cliente;
 use App\Models\Empresa;
 use App\Models\Entrega;
 use App\Models\ItemPedido;
@@ -13,11 +12,12 @@ use App\Models\Pedido;
 use App\Models\Produto;
 use App\Models\PushSubscription;
 use App\Models\TransacaoPagamento;
-use App\Models\User;
 use App\Http\Controllers\Api\Mesa\MesaSessionController;
+use App\Services\ClienteIdentityService;
 use App\Services\GeocodingService;
 use App\Services\TaxaEntregaService;
 use App\Services\AsaasService;
+use App\Services\PromocaoService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
@@ -94,8 +94,59 @@ class PedidoOnlineController extends Controller
                 'descricao' => $produto->ds_produto,
                 'preco' => (float) $produto->vl_preco_base,
                 'categoria' => $produto->categoria?->nm_categoria,
+                'categoria_id' => (int) $produto->id_categoria,
                 'imagem' => MesaSessionController::resolveImagemUrl($request, $produto->url_imagem),
             ])->values(),
+            'promocoes' => app(PromocaoService::class)->campanhasPublicas((int) $empresa->id_empresa),
+        ]);
+    }
+
+    public function precificar(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'coupon_code' => ['nullable', 'string', 'max:50'],
+            'telefone' => ['nullable', 'string', 'max:20'],
+            'id_cliente' => ['nullable', 'integer', 'exists:cliente,id_cliente'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.id_produto' => ['required', 'integer', 'exists:produto,id_produto'],
+            'items.*.qty' => ['required', 'integer', 'min:1', 'max:50'],
+        ]);
+        $empresa = Empresa::orderBy('id_empresa')->first();
+        if (!$empresa) {
+            return response()->json(['message' => 'Nenhum restaurante configurado.'], 422);
+        }
+
+        $products = Produto::where('id_empresa', $empresa->id_empresa)
+            ->where('fl_ativo', true)
+            ->whereIn('id_produto', collect($data['items'])->pluck('id_produto'))
+            ->with('categoria')
+            ->get()
+            ->keyBy('id_produto');
+        if ($products->count() !== collect($data['items'])->pluck('id_produto')->unique()->count()) {
+            return response()->json(['message' => 'Um ou mais produtos não estão disponíveis para pedido.'], 422);
+        }
+
+        $identity = app(ClienteIdentityService::class);
+        $clientId = !empty($data['id_cliente'])
+            ? $identity->resolverPorId((int) $data['id_cliente'])?->id_cliente
+            : $identity->buscarPorTelefone($data['telefone'] ?? null)?->id_cliente;
+        $calculation = app(PromocaoService::class)->calcular(
+            (int) $empresa->id_empresa,
+            $data['items'],
+            $products,
+            $data['coupon_code'] ?? null,
+            $clientId ? (int) $clientId : null,
+        );
+
+        return response()->json([
+            'subtotal_original' => $calculation['original_subtotal'],
+            'subtotal' => $calculation['subtotal'],
+            'discount' => $calculation['discount'],
+            'automatic_discount' => $calculation['automatic_discount'],
+            'coupon_discount' => $calculation['coupon_discount'],
+            'total' => $calculation['subtotal'],
+            'items' => $calculation['items'],
+            'coupon_code' => !empty($data['coupon_code']) ? mb_strtoupper(trim($data['coupon_code'])) : null,
         ]);
     }
 
@@ -121,6 +172,7 @@ class PedidoOnlineController extends Controller
             'numero' => ['nullable', 'string', 'max:20'],
             'change_for' => ['nullable', 'numeric', 'min:0'],
             'note' => ['nullable', 'string', 'max:500'],
+            'coupon_code' => ['nullable', 'string', 'max:50'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.id_produto' => ['required', 'integer', 'exists:produto,id_produto'],
             'items.*.qty' => ['required', 'integer', 'min:1'],
@@ -177,31 +229,19 @@ class PedidoOnlineController extends Controller
 
         try {
             $pedido = DB::transaction(function () use ($data, $empresa, $produtos, $coordenadas, $isRetirada, $taxaEntrega, $idempotencyKey) {
-                $cliente = Cliente::with('usuario')->where('telefone', $data['telefone'])->first();
+                $cliente = app(ClienteIdentityService::class)
+                    ->buscarOuCriar($data['nome'], $data['telefone']);
 
-                if (!$cliente) {
-                    $emailSintetico = strtolower(preg_replace('/\s+/', '.', trim($data['nome'])))
-                        . '+' . now()->timestamp . '@cliente.local';
-
-                    $usuario = User::create([
-                        'nm_usuario' => $data['nome'],
-                        'email' => $emailSintetico,
-                        'senha_hash' => bcrypt(Str::random(40)),
-                        'perfil' => 'CLIENTE',
-                        'fl_ativo' => true,
-                    ]);
-
-                    $cliente = Cliente::create([
-                        'id_usuario' => $usuario->id_usuario,
-                        'telefone' => $data['telefone'],
-                    ])->load('usuario');
-                }
-
-                $total = 0;
-                foreach ($data['items'] as $item) {
-                    $produto = $produtos->get($item['id_produto']);
-                    $total += (float) $produto->vl_preco_base * $item['qty'];
-                }
+                $calculation = app(PromocaoService::class)->calcular(
+                    (int) $empresa->id_empresa,
+                    $data['items'],
+                    $produtos,
+                    $data['coupon_code'] ?? null,
+                    (int) $cliente->id_cliente,
+                    true,
+                );
+                $totalOriginal = $calculation['original_subtotal'];
+                $total = $calculation['subtotal'];
 
                 $nrPedidoDelivery = null;
                 if (!$isRetirada) {
@@ -226,19 +266,18 @@ class PedidoOnlineController extends Controller
                     'ds_nota_pedido' => !empty($data['note']) ? mb_strtoupper($data['note']) : null,
                 ]);
 
-                foreach ($data['items'] as $item) {
-                    $produto = $produtos->get($item['id_produto']);
-
+                foreach ($calculation['order_items'] as $item) {
                     ItemPedido::create([
                         'id_pedido' => $pedido->id_pedido,
-                        'id_produto' => $produto->id_produto,
+                        'id_produto' => $item['id_produto'],
                         'nr_quantidade' => $item['qty'],
-                        'vl_preco_unitario' => $produto->vl_preco_base,
-                        'vl_subtotal' => round((float) $produto->vl_preco_base * $item['qty'], 2),
+                        'vl_preco_unitario' => $item['unit_price'],
+                        'vl_subtotal' => $item['subtotal'],
                     ]);
                 }
 
                 $formaPagamento = self::FRONT_TO_DB_PAYMENT[$data['payment_method']];
+                $totalOriginalWithFee = round($totalOriginal + $taxaEntrega, 2);
                 $totalFinal = round($total + $taxaEntrega, 2);
 
                 Pagamento::create([
@@ -246,10 +285,11 @@ class PedidoOnlineController extends Controller
                     'forma' => $formaPagamento,
                     'troco_para' => $formaPagamento === 'DINHEIRO' ? ($data['change_for'] ?? null) : null,
                     'status' => 'PENDENTE',
-                    'vl_total' => $totalFinal,
-                    'vl_desconto' => 0,
+                    'vl_total' => $totalOriginalWithFee,
+                    'vl_desconto' => $calculation['discount'],
                     'vl_final' => $totalFinal,
                 ]);
+                app(PromocaoService::class)->registrarUtilizacoes($calculation, $pedido, (int) $cliente->id_cliente);
 
                 if (!$isRetirada) {
                     Entrega::create([
@@ -478,6 +518,7 @@ class PedidoOnlineController extends Controller
             'delivery_number' => $pedido->nr_pedido_delivery,
             'tipo_entrega' => $pedido->tipo_pedido === 'BALCAO' ? 'retirada' : 'delivery',
             'subtotal' => (float) $pedido->vl_total,
+            'discount' => (float) ($pedido->pagamento?->vl_desconto ?? 0),
             'total' => round((float) $pedido->vl_total + (float) $pedido->vl_taxa_entrega, 2),
             'status' => self::DB_TO_FRONT_STATUS[$pedido->status] ?? 'aguardando_confirmacao',
             'payment' => $paymentPayload ?? ($this->gatewayPaymentExpected($data) ? $this->paymentPayload($pedido) : null),
@@ -493,7 +534,7 @@ class PedidoOnlineController extends Controller
      */
     public function clientePorTelefone(string $telefone): JsonResponse
     {
-        $cliente = Cliente::with('usuario')->where('telefone', $telefone)->first();
+        $cliente = app(ClienteIdentityService::class)->buscarPorTelefone($telefone);
 
         if (!$cliente || !$cliente->usuario) {
             return response()->json(['message' => 'Cliente nao encontrado.'], 404);

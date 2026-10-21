@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\WhatsappInstance;
 use App\Models\WhatsappMensagem;
+use App\Models\PosVenda;
+use Illuminate\Support\Facades\Http;
 use Tests\Concerns\CriaDadosBasicos;
 use Tests\TestCase;
 
@@ -135,6 +137,104 @@ class EvolutionWebhookTest extends TestCase
 
         $response->assertOk();
         $this->assertDatabaseMissing('whatsapp_mensagem', ['id_externo' => 'MSG999']);
+    }
+
+    public function test_resposta_automatica_e_enviada_uma_vez_a_cada_24_horas_por_telefone(): void
+    {
+        $instancia = $this->criarInstancia();
+        $instancia->update([
+            'status_conexao' => 'open',
+            'configuracoes' => [
+                'mensagens' => [
+                    'resposta_automatica_ativa' => true,
+                    'resposta_automatica' => 'Recebemos seu contato.',
+                ],
+            ],
+        ]);
+        config([
+            'services.evolution.base_url' => 'http://evolution-api.test',
+            'services.evolution.api_key' => 'chave-de-teste',
+        ]);
+        Http::fake([
+            'evolution-api.test/message/sendText/*' => Http::response(['key' => ['id' => 'AUTO1']], 200),
+        ]);
+
+        foreach (['Primeiro contato', 'Outra mensagem'] as $indice => $texto) {
+            $this->postJson('/api/webhooks/evolution', [
+                'event' => 'messages.upsert',
+                'instance' => $instancia->nm_instancia,
+                'data' => [
+                    'key' => [
+                        'remoteJid' => '5511988887777@s.whatsapp.net',
+                        'fromMe' => false,
+                        'id' => 'IN' . $indice,
+                    ],
+                    'message' => ['conversation' => $texto],
+                    'messageType' => 'conversation',
+                ],
+                'apikey' => self::TOKEN_INSTANCIA,
+            ])->assertOk();
+        }
+
+        $this->assertDatabaseCount('whatsapp_mensagem', 3);
+        $this->assertDatabaseHas('whatsapp_mensagem', [
+            'id_whatsapp_instancia' => $instancia->id_whatsapp_instancia,
+            'direcao' => 'SAIDA',
+            'telefone' => '5511988887777',
+            'conteudo' => 'Recebemos seu contato.',
+            'tipo' => 'auto_resposta',
+        ]);
+        Http::assertSentCount(1);
+    }
+
+    public function test_mensagem_comum_nao_e_consumida_como_resposta_de_pesquisa_pendente(): void
+    {
+        $instancia = $this->criarInstancia();
+        $instancia->update([
+            'status_conexao' => 'open',
+            'configuracoes' => [
+                'mensagens' => [
+                    'resposta_automatica_ativa' => true,
+                    'resposta_automatica' => 'Recebemos seu contato.',
+                ],
+            ],
+        ]);
+        $pesquisa = PosVenda::create([
+            'telefone' => '5511988887777',
+            'status' => 'ENVIADA',
+            'dt_enviado' => now(),
+        ]);
+        config([
+            'services.evolution.base_url' => 'http://evolution-api.test',
+            'services.evolution.api_key' => 'chave-de-teste',
+        ]);
+        Http::fake([
+            'evolution-api.test/message/sendText/*' => Http::response(['key' => ['id' => 'AUTO2']], 200),
+        ]);
+
+        $this->postJson('/api/webhooks/evolution', [
+            'event' => 'messages.upsert',
+            'instance' => $instancia->nm_instancia,
+            'data' => [
+                'key' => [
+                    'remoteJid' => '5511988887777@s.whatsapp.net',
+                    'fromMe' => false,
+                    'id' => 'IN_REPLY',
+                ],
+                'message' => ['conversation' => 'Oi, gostaria de tirar uma duvida'],
+                'messageType' => 'conversation',
+            ],
+            'apikey' => self::TOKEN_INSTANCIA,
+        ])->assertOk();
+
+        $this->assertSame('ENVIADA', $pesquisa->fresh()->status);
+        $this->assertDatabaseHas('whatsapp_mensagem', [
+            'id_whatsapp_instancia' => $instancia->id_whatsapp_instancia,
+            'direcao' => 'SAIDA',
+            'telefone' => '5511988887777',
+            'conteudo' => 'Recebemos seu contato.',
+            'tipo' => 'auto_resposta',
+        ]);
     }
 
     public function test_instancia_desconhecida_retorna_401(): void

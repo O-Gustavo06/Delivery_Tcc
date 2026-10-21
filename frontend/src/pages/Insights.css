@@ -1,0 +1,155 @@
+.insight-control {
+  min-width: 0;
+  padding: 9px 11px;
+  color: var(--text);
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.growth-toolbar,
+.growth-filters,
+.growth-shortcuts {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.growth-toolbar {
+  flex: 1 1 650px;
+  max-width: 760px;
+  justify-content: flex-end;
+}
+
+.growth-shortcuts {
+  align-self: center;
+}
+
+.calendar-navigation {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-transform: capitalize;
+}
+
+.growth-calendar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.calendar-weekday {
+  padding: 6px 2px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
+}
+
+.calendar-day {
+  min-width: 0;
+  min-height: 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.calendar-day strong {
+  max-width: 100%;
+  color: var(--success);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.calendar-day-selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.calendar-day-empty {
+  visibility: hidden;
+}
+
+.calendar-day-details {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.calendar-day-details h3 {
+  margin: 0;
+}
+
+.calendar-day-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: var(--muted);
+}
+
+.calendar-day-summary strong {
+  color: var(--text);
+}
+
+.insight-field {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.client-search {
+  width: min(320px, 100%);
+}
+
+.report-form {
+  display: grid;
+  gap: 22px;
+}
+
+.report-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.report-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.report-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.report-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 760px) {
+  .growth-toolbar,
+  .growth-shortcuts,
+  .growth-filters {
+    width: 100%;
+  }
+
+  .growth-filters > * {
+    flex: 1 1 130px;
+  }
+}

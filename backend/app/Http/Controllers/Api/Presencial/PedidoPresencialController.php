@@ -9,11 +9,11 @@ use App\Models\ItemPedido;
 use App\Models\Pagamento;
 use App\Models\Pedido;
 use App\Models\Produto;
-use App\Models\User;
+use App\Services\ClienteIdentityService;
+use App\Services\PromocaoService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 
 /**
  * Pedido feito pelo cliente no cardapio presencial (/presencial), dentro do restaurante.
@@ -37,8 +37,10 @@ class PedidoPresencialController extends Controller
     {
         $data = $request->validate([
             'nome' => ['required', 'string', 'max:150'],
+            'telefone' => ['required', 'string', 'max:20'],
             'payment_method' => ['required', 'string', 'in:pix,cartao,dinheiro'],
             'note' => ['nullable', 'string', 'max:500'],
+            'coupon_code' => ['nullable', 'string', 'max:50'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.id_produto' => ['required', 'integer', 'exists:produto,id_produto'],
             'items.*.qty' => ['required', 'integer', 'min:1', 'max:50'],
@@ -59,78 +61,67 @@ class PedidoPresencialController extends Controller
             ->get()
             ->keyBy('id_produto');
 
-        if ($produtos->isEmpty()) {
-            return response()->json(['message' => 'Esse prato nao esta disponivel no momento.'], 422);
+        if ($produtos->count() !== collect($data['items'])->pluck('id_produto')->unique()->count()) {
+            return response()->json(['message' => 'Um ou mais produtos não estão disponíveis para pedido.'], 422);
         }
 
         $pedido = DB::transaction(function () use ($data, $empresa, $produtos) {
-            // Sem telefone no balcao: cada pedido gera um cliente so com o nome (o atendente chama por ele).
-            $emailSintetico = strtolower(preg_replace('/\s+/', '.', trim($data['nome'])))
-                . '+' . now()->timestamp . Str::lower(Str::random(4)) . '@cliente.local';
+            $cliente = app(ClienteIdentityService::class)->buscarOuCriar($data['nome'], $data['telefone']);
 
-            $usuario = User::create([
-                'nm_usuario' => $data['nome'],
-                'email' => $emailSintetico,
-                'senha_hash' => bcrypt(Str::random(40)),
-                'perfil' => 'CLIENTE',
-                'fl_ativo' => true,
-            ]);
-
-            $cliente = Cliente::create([
-                'id_usuario' => $usuario->id_usuario,
-            ]);
-
-            $total = 0;
-            foreach ($data['items'] as $item) {
-                $produto = $produtos->get($item['id_produto']);
-                if ($produto) {
-                    $total += (float) $produto->vl_preco_base * $item['qty'];
-                }
-            }
-
-            $pedido = Pedido::create([
-                'id_empresa' => $empresa->id_empresa,
-                'id_cliente' => $cliente->id_cliente,
-                'codigo_qr' => (string) Str::uuid(),
-                'tipo_pedido' => 'BALCAO',
-                'canal_origem' => 'PRESENCIAL',
-                'status' => 'PENDENTE',
-                'vl_total' => round($total, 2),
-                'vl_taxa_entrega' => 0,
-                'ds_nota_pedido' => !empty($data['note']) ? mb_strtoupper(trim($data['note'])) : null,
-            ]);
-
-            foreach ($data['items'] as $item) {
-                $produto = $produtos->get($item['id_produto']);
-                if (!$produto) {
-                    continue;
-                }
-
-                ItemPedido::create([
-                    'id_pedido' => $pedido->id_pedido,
-                    'id_produto' => $produto->id_produto,
-                    'nr_quantidade' => $item['qty'],
-                    'vl_preco_unitario' => $produto->vl_preco_base,
-                    'vl_subtotal' => round((float) $produto->vl_preco_base * $item['qty'], 2),
-                ]);
-            }
-
-            Pagamento::create([
-                'id_pedido' => $pedido->id_pedido,
-                'forma' => self::FRONT_TO_DB_PAYMENT[$data['payment_method']],
-                'status' => 'PENDENTE',
-                'vl_total' => round($total, 2),
-                'vl_desconto' => 0,
-                'vl_final' => round($total, 2),
-            ]);
-
-            return $pedido;
+            return $this->createOrderForExistingCustomer($data, $empresa, $produtos, $cliente);
         });
 
         return response()->json([
             'number' => $pedido->id_pedido,
             'codigo_qr' => $pedido->codigo_qr,
             'total' => (float) $pedido->vl_total,
+            'discount' => (float) ($pedido->pagamento?->vl_desconto ?? 0),
         ], 201);
+    }
+
+    private function createOrderForExistingCustomer(array $data, Empresa $empresa, $produtos, Cliente $cliente): Pedido
+    {
+        $calculation = app(PromocaoService::class)->calcular(
+            (int) $empresa->id_empresa,
+            $data['items'],
+            $produtos,
+            $data['coupon_code'] ?? null,
+            (int) $cliente->id_cliente,
+            true,
+        );
+
+        $pedido = Pedido::create([
+            'id_empresa' => $empresa->id_empresa,
+            'id_cliente' => $cliente->id_cliente,
+            'codigo_qr' => (string) Str::uuid(),
+            'tipo_pedido' => 'BALCAO',
+            'canal_origem' => 'PRESENCIAL',
+            'status' => 'PENDENTE',
+            'vl_total' => $calculation['subtotal'],
+            'vl_taxa_entrega' => 0,
+            'ds_nota_pedido' => !empty($data['note']) ? mb_strtoupper(trim($data['note'])) : null,
+        ]);
+
+        foreach ($calculation['order_items'] as $item) {
+            ItemPedido::create([
+                'id_pedido' => $pedido->id_pedido,
+                'id_produto' => $item['id_produto'],
+                'nr_quantidade' => $item['qty'],
+                'vl_preco_unitario' => $item['unit_price'],
+                'vl_subtotal' => $item['subtotal'],
+            ]);
+        }
+
+        Pagamento::create([
+            'id_pedido' => $pedido->id_pedido,
+            'forma' => self::FRONT_TO_DB_PAYMENT[$data['payment_method']],
+            'status' => 'PENDENTE',
+            'vl_total' => $calculation['original_subtotal'],
+            'vl_desconto' => $calculation['discount'],
+            'vl_final' => $calculation['subtotal'],
+        ]);
+        app(PromocaoService::class)->registrarUtilizacoes($calculation, $pedido, (int) $cliente->id_cliente);
+
+        return $pedido->load('pagamento');
     }
 }

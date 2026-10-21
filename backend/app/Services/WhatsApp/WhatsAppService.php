@@ -6,6 +6,8 @@ use App\Models\Cliente;
 use App\Models\Empresa;
 use App\Models\WhatsappInstance;
 use App\Models\WhatsappMensagem;
+use App\Services\ClienteIdentityService;
+use App\Services\PosVendaService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -14,13 +16,44 @@ use Throwable;
 /**
  * Orquestra a integracao WhatsApp por empresa: decide qual instancia da Evolution API
  * pertence a qual empresa, persiste o estado da conexao em `whatsapp_instancia` e concentra
- * o envio/recebimento de mensagens. Controllers (Admin e Webhook) so falam com esta classe -
- * nunca com EvolutionApiService diretamente, pra nao espalhar regra de negocio.
+ * o envio/recebimento de mensagens. Controllers, jobs e webhooks usam esta classe.
  */
 class WhatsAppService
 {
+    private const MENSAGEM_POS_VENDA_PADRAO = 'Como foi sua experiencia com o nosso atendimento? Responda com uma nota de 1 a 5. Se quiser, envie um comentario em seguida. Obrigado!';
+    private const MENSAGEM_AUTO_RESPOSTA_PADRAO = 'Ola! Recebemos sua mensagem e em breve nossa equipe falara com voce.';
+
     public function __construct(private readonly EvolutionApiService $evolution)
     {
+    }
+
+    public function salvarConfiguracoesMensagens(Empresa $empresa, array $dados): array
+    {
+        $instancia = $this->instanciaDaEmpresa($empresa);
+        if (!$instancia) {
+            throw new EvolutionApiException('Conecte o WhatsApp antes de configurar as mensagens.');
+        }
+
+        $configuracoes = $instancia->configuracoes ?? [];
+        $configuracoes['mensagens'] = [
+            'pos_venda' => trim($dados['mensagem_pos_venda']),
+            'resposta_automatica_ativa' => (bool) $dados['resposta_automatica_ativa'],
+            'resposta_automatica' => trim($dados['mensagem_resposta_automatica'] ?? ''),
+        ];
+        $instancia->update(['configuracoes' => $configuracoes]);
+
+        return $this->configuracoesMensagens($instancia->fresh());
+    }
+
+    public function mensagemPosVenda(Empresa $empresa): string
+    {
+        $instancia = $this->instanciaDaEmpresa($empresa);
+        $mensagens = $instancia?->configuracoes['mensagens'] ?? [];
+        $mensagem = $mensagens['pos_venda'] ?? null;
+
+        return is_string($mensagem) && trim($mensagem) !== ''
+            ? $mensagem
+            : self::MENSAGEM_POS_VENDA_PADRAO;
     }
 
     public function instanciaDaEmpresa(Empresa $empresa): ?WhatsappInstance
@@ -36,9 +69,7 @@ class WhatsAppService
      */
     private function buscarClientePorTelefone(string $telefone): ?Cliente
     {
-        $ultimosDigitos = substr($telefone, -11);
-
-        return Cliente::whereRaw('RIGHT(telefone, 11) = ?', [$ultimosDigitos])->first();
+        return app(ClienteIdentityService::class)->buscarPorTelefone($telefone);
     }
 
     /**
@@ -128,7 +159,10 @@ class WhatsAppService
             return [];
         }
 
-        $numero = $this->normalizarTelefone($telefone);
+        $numero = ClienteIdentityService::normalizarTelefone($telefone);
+        if (!$numero) {
+            return [];
+        }
         $nomeCliente = $this->buscarClientePorTelefone($numero)?->usuario?->nm_usuario;
 
         $mensagens = WhatsappMensagem::where('id_whatsapp_instancia', $instancia->id_whatsapp_instancia)
@@ -278,12 +312,18 @@ class WhatsAppService
     }
 
     /**
-     * Envio reutilizavel de mensagem de texto, usado tanto por acoes manuais quanto pelas
-     * futuras automacoes de pedido (confirmado, saiu pra entrega etc). Nunca deixa uma falha
+     * Envio reutilizavel de mensagem de texto, usado por acoes manuais e pelo pos-venda.
+     * Nunca deixa uma falha
      * de envio (WhatsApp desconectado, numero invalido, Evolution fora do ar) quebrar quem
      * chamou - so retorna false e loga.
      */
-    public function sendMessage(Empresa $empresa, string $telefone, string $mensagem): bool
+    public function sendMessage(
+        Empresa $empresa,
+        string $telefone,
+        string $mensagem,
+        ?int $idPosVenda = null,
+        bool $automatica = false,
+    ): bool
     {
         $instancia = $this->instanciaDaEmpresa($empresa);
         if (!$instancia || !$instancia->conectada()) {
@@ -294,7 +334,14 @@ class WhatsAppService
             return false;
         }
 
-        $numero = $this->normalizarTelefone($telefone);
+        $numero = ClienteIdentityService::normalizarTelefone($telefone);
+        if (!$numero) {
+            Log::warning('Tentativa de enviar WhatsApp para telefone invalido.', [
+                'id_empresa' => $empresa->id_empresa,
+            ]);
+
+            return false;
+        }
 
         try {
             $resposta = $this->evolution->enviarTexto($instancia->nm_instancia, $numero, $mensagem);
@@ -302,10 +349,11 @@ class WhatsAppService
             WhatsappMensagem::create([
                 'id_whatsapp_instancia' => $instancia->id_whatsapp_instancia,
                 'id_cliente' => $this->buscarClientePorTelefone($numero)?->id_cliente,
+                'id_pos_venda' => $idPosVenda,
                 'direcao' => 'SAIDA',
                 'telefone' => $numero,
                 'conteudo' => $mensagem,
-                'tipo' => 'texto',
+                'tipo' => $automatica ? 'auto_resposta' : 'texto',
                 'id_externo' => $resposta['key']['id'] ?? null,
                 'status_envio' => 'ENVIADO',
                 'dt_mensagem' => now(),
@@ -389,7 +437,10 @@ class WhatsAppService
             return; // Sem remetente identificavel ou mensagem de grupo - fora de escopo por enquanto.
         }
 
-        $telefone = $this->normalizarTelefone($remoteJid);
+        $telefone = ClienteIdentityService::normalizarTelefone($remoteJid);
+        if (!$telefone) {
+            return;
+        }
         $fromMe = (bool) ($mensagem['key']['fromMe'] ?? false);
         $texto = $mensagem['message']['conversation']
             ?? $mensagem['message']['extendedTextMessage']['text']
@@ -400,7 +451,7 @@ class WhatsAppService
         // como fallback de exibicao quando o telefone nao bate com nenhum Cliente cadastrado.
         $pushName = !$fromMe ? ($mensagem['pushName'] ?? null) : null;
 
-        WhatsappMensagem::create([
+        $registro = WhatsappMensagem::create([
             'id_whatsapp_instancia' => $instancia->id_whatsapp_instancia,
             'id_cliente' => $this->buscarClientePorTelefone($telefone)?->id_cliente,
             'direcao' => $fromMe ? 'SAIDA' : 'ENTRADA',
@@ -418,6 +469,33 @@ class WhatsAppService
                 ? Carbon::createFromTimestamp((int) $mensagem['messageTimestamp'], config('app.timezone'))
                 : now(),
         ]);
+
+        app(PosVendaService::class)->registrarResposta($registro);
+        if (!$fromMe && !$registro->id_pos_venda) {
+            $this->responderAutomaticamente($instancia, $telefone);
+        }
+    }
+
+    private function responderAutomaticamente(WhatsappInstance $instancia, string $telefone): void
+    {
+        $configuracoes = $instancia->configuracoes['mensagens'] ?? [];
+        $ativa = (bool) ($configuracoes['resposta_automatica_ativa'] ?? false);
+        $mensagem = trim((string) ($configuracoes['resposta_automatica'] ?? ''));
+        if (!$ativa || $mensagem === '') {
+            return;
+        }
+
+        $respondeuNasUltimas24Horas = WhatsappMensagem::where('id_whatsapp_instancia', $instancia->id_whatsapp_instancia)
+            ->where('telefone', $telefone)
+            ->where('direcao', 'SAIDA')
+            ->where('tipo', 'auto_resposta')
+            ->where('dt_mensagem', '>=', now()->subHours(24))
+            ->exists();
+        if ($respondeuNasUltimas24Horas) {
+            return;
+        }
+
+        $this->sendMessage($instancia->empresa, $telefone, $mensagem, null, true);
     }
 
     private function tratarAtualizacaoStatusMensagem(WhatsappInstance $instancia, array $data): void
@@ -461,7 +539,7 @@ class WhatsAppService
             $detalhes = $this->evolution->buscarInstancia($nomeInstancia);
             $ownerJid = $detalhes['ownerJid'] ?? null;
 
-            return $ownerJid ? $this->normalizarTelefone($ownerJid) : null;
+            return $ownerJid ? ClienteIdentityService::normalizarTelefone($ownerJid) : null;
         } catch (Throwable $e) {
             Log::warning('Falha ao buscar numero conectado da instancia WhatsApp.', [
                 'instancia' => $nomeInstancia,
@@ -488,19 +566,6 @@ class WhatsAppService
         return config('services.evolution.webhook_url') ?: rtrim(config('app.url'), '/') . '/api/webhooks/evolution';
     }
 
-    /** Aceita numero puro ou remoteJid (5511999999999@s.whatsapp.net) e devolve so digitos. */
-    private function normalizarTelefone(string $numero): string
-    {
-        $semSufixo = Str::before($numero, '@');
-        $digitos = preg_replace('/\D/', '', $semSufixo);
-
-        if (strlen($digitos) <= 11) {
-            $digitos = '55' . $digitos;
-        }
-
-        return $digitos;
-    }
-
     private function toPublic(WhatsappInstance $instancia, ?array $qrcode = null): array
     {
         return [
@@ -511,6 +576,18 @@ class WhatsAppService
             'numero' => $instancia->nr_telefone,
             'dt_conectado' => $instancia->dt_conectado?->toIso8601String(),
             'qrcode' => $qrcode['base64'] ?? null,
+            'configuracoes_mensagens' => $this->configuracoesMensagens($instancia),
+        ];
+    }
+
+    private function configuracoesMensagens(WhatsappInstance $instancia): array
+    {
+        $mensagens = $instancia->configuracoes['mensagens'] ?? [];
+
+        return [
+            'mensagem_pos_venda' => $mensagens['pos_venda'] ?? self::MENSAGEM_POS_VENDA_PADRAO,
+            'resposta_automatica_ativa' => (bool) ($mensagens['resposta_automatica_ativa'] ?? false),
+            'mensagem_resposta_automatica' => $mensagens['resposta_automatica'] ?? self::MENSAGEM_AUTO_RESPOSTA_PADRAO,
         ];
     }
 }

@@ -44,6 +44,23 @@ services:
       - app_storage:/var/www/html/storage
       - app_bootstrap_cache:/var/www/html/bootstrap/cache
 
+  # Processa mensagens de pós-venda agendadas; o serviço app permanece dedicado ao HTTP.
+  queue:
+    build:
+      context: ./backend
+    container_name: restaurante_queue
+    restart: unless-stopped
+    command: ["php", "artisan", "queue:work", "database", "--queue=whatsapp,default", "--sleep=3", "--tries=3", "--timeout=90"]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/var/www/html
+      - ./backend/.env.docker:/var/www/html/.env:ro
+      - app_vendor:/var/www/html/vendor
+      - app_storage:/var/www/html/storage
+      - app_bootstrap_cache:/var/www/html/bootstrap/cache
+
   # --- Integracao WhatsApp (Evolution API) ---------------------------------------------
   # Camada de comunicacao com o WhatsApp usada pelo backend (App\Services\WhatsApp). O
   # backend fala com ela via rede interna do Docker (EVOLUTION_API_URL=http://evolution-api:8080

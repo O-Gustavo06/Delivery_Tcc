@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Empresa;
+use App\Models\Cliente;
 use Illuminate\Support\Facades\Http;
 use Tests\Concerns\CriaDadosBasicos;
 use Tests\TestCase;
@@ -71,6 +72,26 @@ class AdminOrderTest extends TestCase
             ->assertJsonPath('codigo_qr', fn ($qr) => !empty($qr));
 
         $this->assertDatabaseHas('mesa', ['id_mesa' => $mesa->id_mesa, 'status_ocupacao' => 'OCUPADA']);
+    }
+
+    public function test_pedido_administrativo_vincula_cliente_pelo_telefone_normalizado(): void
+    {
+        $this->empresaPronta();
+        $cliente = Cliente::create([
+            'id_usuario' => $this->criarUsuario('CLIENTE')->id_usuario,
+            'telefone' => '11912345678',
+        ]);
+
+        $response = $this->postJson('/api/admin/orders', [
+            'type' => 'delivery',
+            'customer_name' => 'Nome no pedido',
+            'customer_phone' => '+55 (11) 91234-5678',
+            'address' => 'Rua Teste, 1',
+            'items' => [['name' => 'Pizza', 'qty' => 1, 'price' => 39.90]],
+        ], $this->headers());
+
+        $response->assertStatus(201);
+        $this->assertSame($cliente->id_cliente, \App\Models\Pedido::findOrFail($response->json('id'))->id_cliente);
     }
 
     public function test_cria_pedido_delivery_dinheiro_com_troco(): void

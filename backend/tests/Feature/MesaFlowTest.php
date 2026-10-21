@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\EnviarPesquisaPosVenda;
+use Illuminate\Support\Facades\Queue;
 use Tests\Concerns\CriaDadosBasicos;
 use Tests\TestCase;
 
@@ -121,6 +123,7 @@ class MesaFlowTest extends TestCase
 
     public function test_fluxo_completo_pedir_fechar_e_caixa_confirmar_libera_mesa(): void
     {
+        Queue::fake();
         $empresa = $this->criarEmpresa();
         $categoria = $this->criarCategoria($empresa);
         $produto = $this->criarProduto($empresa, $categoria, ['vl_preco_base' => 30.00]);
@@ -152,6 +155,12 @@ class MesaFlowTest extends TestCase
 
         $this->assertDatabaseHas('mesa', ['id_mesa' => $mesa->id_mesa, 'status_ocupacao' => 'LIVRE']);
         $this->assertDatabaseHas('pagamento', ['id_pedido' => \App\Models\Pedido::where('id_comanda', $idComanda)->value('id_pedido'), 'status' => 'APROVADO']);
+        $this->assertDatabaseHas('pos_venda', [
+            'id_comanda' => $idComanda,
+            'status' => 'AGENDADA',
+        ]);
+        Queue::assertPushedOn('whatsapp', EnviarPesquisaPosVenda::class);
+        $this->assertCount(1, Queue::pushed(EnviarPesquisaPosVenda::class));
     }
 
     public function test_nao_da_pra_pedir_em_comanda_ja_fechada(): void

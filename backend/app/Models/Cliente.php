@@ -18,8 +18,22 @@ class Cliente extends Model
     protected $fillable = [
         'id_usuario',
         'telefone',
+        'telefone_normalizado',
+        'id_cliente_principal',
         'cpf',
     ];
+
+    protected static function booted(): void
+    {
+        static::saving(function (Cliente $cliente) {
+            if ($cliente->id_cliente_principal) {
+                $cliente->telefone_normalizado = null;
+                return;
+            }
+
+            $cliente->telefone_normalizado = \App\Services\ClienteIdentityService::normalizarTelefone($cliente->telefone);
+        });
+    }
 
     public function usuario()
     {

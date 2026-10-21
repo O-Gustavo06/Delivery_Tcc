@@ -10,7 +10,9 @@ use App\Http\Controllers\Api\Admin\EmpresaController;
 use App\Http\Controllers\Api\Admin\AdminMesaController;
 use App\Http\Controllers\Api\Admin\AdminEstoqueController;
 use App\Http\Controllers\Api\Admin\AdminProdutoController;
+use App\Http\Controllers\Api\Admin\AdminPromocaoController;
 use App\Http\Controllers\Api\Admin\AdminWhatsAppController;
+use App\Http\Controllers\Api\Admin\AdminGrowthController;
 use App\Http\Controllers\Api\Motoboy\PedidoScanController;
 use App\Http\Controllers\Api\Motoboy\EntregaController;
 use App\Http\Controllers\Api\Motoboy\RotaController;
@@ -31,6 +33,9 @@ Route::prefix('auth')->group(function () {
 
 Route::prefix('admin')->middleware(['auth.api', 'role:admin'])->group(function () {
     Route::get('dashboard', [AdminDashboardController::class, 'index']);
+    Route::get('growth', [AdminGrowthController::class, 'crescimento']);
+    Route::get('customers', [AdminGrowthController::class, 'clientes']);
+    Route::get('customers/{id}/audit', [AdminGrowthController::class, 'auditoria']);
     Route::get('relatorios/export', [AdminDashboardController::class, 'exportarRelatorio']);
     Route::get('users', [AdminUserController::class, 'index']);
     Route::post('users/create', [AdminUserController::class, 'store']);
@@ -83,7 +88,12 @@ Route::prefix('admin')->middleware(['auth.api', 'role:admin'])->group(function (
     Route::get('produtos/{id}/receita', [AdminProdutoController::class, 'mostrarReceita']);
     Route::put('produtos/{id}/receita', [AdminProdutoController::class, 'salvarReceita']);
 
+    Route::get('promocoes', [AdminPromocaoController::class, 'index']);
+    Route::post('promocoes', [AdminPromocaoController::class, 'store']);
+    Route::patch('promocoes/{id}', [AdminPromocaoController::class, 'update']);
+
     Route::get('whatsapp/status', [AdminWhatsAppController::class, 'status']);
+    Route::put('whatsapp/configuracoes-mensagens', [AdminWhatsAppController::class, 'atualizarConfiguracoesMensagens']);
     Route::post('whatsapp/instancia', [AdminWhatsAppController::class, 'criarInstancia']);
     Route::get('whatsapp/qrcode', [AdminWhatsAppController::class, 'qrcode']);
     Route::post('whatsapp/desconectar', [AdminWhatsAppController::class, 'desconectar']);
@@ -102,6 +112,7 @@ Route::prefix('mesa')->group(function () {
 });
 
 Route::prefix('pedir')->group(function () {
+    Route::post('precificar', [PedidoOnlineController::class, 'precificar']);
     Route::get('/', [PedidoOnlineController::class, 'cardapio']);
     Route::post('/', [PedidoOnlineController::class, 'store']);
     Route::get('status/{codigoQr}', [PedidoOnlineController::class, 'status']);

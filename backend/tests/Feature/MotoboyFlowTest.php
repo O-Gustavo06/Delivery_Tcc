@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\EnviarPesquisaPosVenda;
+use Illuminate\Support\Facades\Queue;
 use Tests\Concerns\CriaDadosBasicos;
 use Tests\TestCase;
 
@@ -69,6 +71,7 @@ class MotoboyFlowTest extends TestCase
 
     public function test_concluir_entrega_de_canal_externo_exige_codigo_de_confirmacao_correto(): void
     {
+        Queue::fake();
         $headers = $this->adminHeaders();
         $entregador = $this->criarEntregador();
         $tokenEntregador = $entregador->usuario->createToken('teste')->plainTextToken;
@@ -98,6 +101,12 @@ class MotoboyFlowTest extends TestCase
             ['codigo_confirmacao' => '8888'],
             ['Authorization' => "Bearer $tokenEntregador"],
         )->assertOk()->assertJsonPath('status_entrega', 'ENTREGUE');
+
+        Queue::assertPushedOn('whatsapp', EnviarPesquisaPosVenda::class);
+        $this->assertDatabaseHas('pos_venda', [
+            'id_pedido' => $pedido['id'],
+            'status' => 'AGENDADA',
+        ]);
     }
 
     /**

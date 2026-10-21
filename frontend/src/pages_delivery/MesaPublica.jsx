@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
 import { gerarPixCopiaECola } from '../utils/pix'
 import { resolveApiBase, resolveAssetUrl } from '../utils/apiBase'
+import { aplicarPromocoes } from '../utils/promotions'
+import usePromotionQuote from '../hooks/usePromotionQuote'
 
 const API_BASE = resolveApiBase()
 
@@ -117,6 +119,9 @@ export default function MesaPublica({ theme, onToggleTheme }) {
     }
   }, [carrinho, carrinhoKey])
   const [enviandoPedido, setEnviandoPedido] = useState(false)
+  const [erroPedido, setErroPedido] = useState('')
+  const [codigoCupom, setCodigoCupom] = useState('')
+  const [cupomAplicado, setCupomAplicado] = useState('')
   const [formaPagamento, setFormaPagamento] = useState('pix')
   const [fechando, setFechando] = useState(false)
   const [qrPixDataUrl, setQrPixDataUrl] = useState('')
@@ -229,37 +234,68 @@ export default function MesaPublica({ theme, onToggleTheme }) {
     })
   }
 
+  const produtosComPreco = useMemo(() => {
+    if (!mesaData) return []
+    return aplicarPromocoes(mesaData.produtos, mesaData.promocoes || [], carrinho)
+  }, [carrinho, mesaData])
+
   const itensCarrinho = useMemo(() => {
     if (!mesaData) return []
     return Object.entries(carrinho)
       .filter(([, qty]) => qty > 0)
       .map(([id, qty]) => {
-        const produto = mesaData.produtos.find((p) => String(p.id) === id)
+        const produto = produtosComPreco.find((p) => String(p.id) === id)
         return produto ? { ...produto, qty } : null
       })
       .filter(Boolean)
-  }, [carrinho, mesaData])
+  }, [carrinho, mesaData, produtosComPreco])
 
   const totalItensCarrinho = itensCarrinho.reduce((soma, item) => soma + item.qty, 0)
   const totalCarrinho = itensCarrinho.reduce((soma, item) => soma + item.preco * item.qty, 0)
+  const subtotalOriginalCarrinho = itensCarrinho.reduce((soma, item) => soma + item.precoOriginal * item.qty, 0)
+  const itensParaCotacao = useMemo(
+    () => itensCarrinho.map((item) => ({ id_produto: item.id, qty: item.qty })),
+    [itensCarrinho],
+  )
+  const { quote: cotacaoCupom, error: erroCupom, loading: validandoCupom } = usePromotionQuote({
+    code: cupomAplicado,
+    items: itensParaCotacao,
+    clientId: sessao?.idCliente,
+  })
+  const totalComCupom = cotacaoCupom?.subtotal ?? totalCarrinho
+  const descontoAutomatico = cotacaoCupom?.automatic_discount ?? Math.max(0, subtotalOriginalCarrinho - totalCarrinho)
+  const descontoCupom = cotacaoCupom?.coupon_discount ?? 0
 
   const enviarPedido = async () => {
     if (itensCarrinho.length === 0) return
     setEnviandoPedido(true)
-
-    await fetch(`${API_BASE}/mesa/${token}/pedidos`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({
-        id_cliente: sessao.idCliente,
-        items: itensCarrinho.map((item) => ({ id_produto: item.id, qty: item.qty })),
-      }),
-    })
-
-    setCarrinho({})
-    setEnviandoPedido(false)
-    setAba('cardapio')
-    await carregarMesa()
+    setErroPedido('')
+    try {
+      const response = await fetch(`${API_BASE}/mesa/${token}/pedidos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          id_cliente: sessao.idCliente,
+          coupon_code: cupomAplicado || undefined,
+          items: itensCarrinho.map((item) => ({ id_produto: item.id, qty: item.qty })),
+        }),
+      })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const validationError = Object.values(payload.errors || {}).flat()[0]
+        setErroPedido(validationError || payload.message || 'Não foi possível enviar o pedido.')
+        return
+      }
+      setCarrinho({})
+      setCodigoCupom('')
+      setCupomAplicado('')
+      setAba('cardapio')
+      await carregarMesa()
+    } catch {
+      setErroPedido('Não foi possível conectar ao restaurante.')
+    } finally {
+      setEnviandoPedido(false)
+    }
   }
 
   const fecharComanda = async () => {
@@ -476,7 +512,7 @@ export default function MesaPublica({ theme, onToggleTheme }) {
             </div>
 
             <div className="mp-product-list">
-              {mesaData.produtos.map((produto) => {
+              {produtosComPreco.map((produto) => {
                 const qty = carrinho[produto.id] || 0
                 const visual = getVisualProduto(produto.nome)
                 return (
@@ -492,7 +528,10 @@ export default function MesaPublica({ theme, onToggleTheme }) {
                       <span>{produto.categoria}</span>
                       <h3>{produto.nome}</h3>
                       {produto.descricao && <p>{produto.descricao}</p>}
-                      <span className="mp-product-price">{formatarPreco(produto.preco)}</span>
+                      <span className="mp-product-price">
+                        {produto.precoOriginal > produto.preco && <del>{formatarPreco(produto.precoOriginal)} </del>}
+                        {formatarPreco(produto.preco)}
+                      </span>
                     </div>
                     <div className="mp-product-action">
                       {qty === 0 ? (
@@ -533,29 +572,72 @@ export default function MesaPublica({ theme, onToggleTheme }) {
             ) : (
               <>
                 <div className="mp-order-list">
-                  {itensCarrinho.map((item) => (
-                    <div className="mp-order-item" key={item.id}>
-                      <div>
-                        <strong>{item.nome}</strong>
-                        <small>{formatarPreco(item.preco)} cada</small>
+                  {itensCarrinho.map((item, index) => {
+                    const itemCotado = cotacaoCupom?.items?.[index]
+                    const precoAtual = itemCotado?.unit_price ?? item.preco
+                    return (
+                      <div className="mp-order-item" key={item.id}>
+                        <div>
+                          <strong>{item.nome}</strong>
+                          <small>
+                            {item.precoOriginal > precoAtual && <del>{formatarPreco(item.precoOriginal)} · </del>}
+                            {formatarPreco(precoAtual)} cada
+                          </small>
+                        </div>
+                        <div className="mp-stepper">
+                          <button type="button" onClick={() => removerDoCarrinho(item.id)} aria-label="Remover um">
+                            −
+                          </button>
+                          <span>{item.qty}</span>
+                          <button type="button" onClick={() => adicionarAoCarrinho(item.id)} aria-label="Adicionar mais um">
+                            +
+                          </button>
+                        </div>
                       </div>
-                      <div className="mp-stepper">
-                        <button type="button" onClick={() => removerDoCarrinho(item.id)} aria-label="Remover um">
-                          −
-                        </button>
-                        <span>{item.qty}</span>
-                        <button type="button" onClick={() => adicionarAoCarrinho(item.id)} aria-label="Adicionar mais um">
-                          +
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
 
+                <div className="mp-coupon">
+                  <label htmlFor="mesaCoupon">Cupom de desconto</label>
+                  <div>
+                    <input
+                      id="mesaCoupon"
+                      value={codigoCupom}
+                      onChange={(event) => setCodigoCupom(event.target.value.toUpperCase())}
+                      placeholder="Digite seu cupom"
+                      disabled={Boolean(cupomAplicado)}
+                    />
+                    {cupomAplicado ? (
+                      <button type="button" onClick={() => { setCodigoCupom(''); setCupomAplicado('') }}>Remover</button>
+                    ) : (
+                      <button type="button" onClick={() => setCupomAplicado(codigoCupom.trim())} disabled={!codigoCupom.trim()}>
+                        Aplicar
+                      </button>
+                    )}
+                  </div>
+                  {validandoCupom && <small>Validando cupom...</small>}
+                  {erroCupom && <small className="mp-error">{erroCupom}</small>}
+                  {cupomAplicado && cotacaoCupom && !erroCupom && <small>Economia do cupom: {formatarPreco(descontoCupom)}</small>}
+                </div>
+
+                {descontoAutomatico > 0 && (
+                  <div className="mp-total-row">
+                    <span>Desconto nos produtos</span>
+                    <strong>−{formatarPreco(descontoAutomatico)}</strong>
+                  </div>
+                )}
+                {descontoCupom > 0 && (
+                  <div className="mp-total-row">
+                    <span>Cupom</span>
+                    <strong>−{formatarPreco(descontoCupom)}</strong>
+                  </div>
+                )}
                 <div className="mp-total-row">
                   <span>Total deste pedido</span>
-                  <strong>{formatarPreco(totalCarrinho)}</strong>
+                  <strong>{formatarPreco(totalComCupom)}</strong>
                 </div>
+                {erroPedido && <small className="mp-error">{erroPedido}</small>}
 
                 <button
                   className="mp-primary-btn"

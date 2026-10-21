@@ -25,6 +25,26 @@ class AdminWhatsAppController extends Controller
         return $this->responder(fn () => $this->whatsApp->status($this->empresaAtual()));
     }
 
+    public function atualizarConfiguracoesMensagens(Request $request): JsonResponse
+    {
+        $dados = $request->validate([
+            'mensagem_pos_venda' => ['required', 'string', 'max:4096'],
+            'resposta_automatica_ativa' => ['required', 'boolean'],
+            'mensagem_resposta_automatica' => [
+                $request->boolean('resposta_automatica_ativa') ? 'required' : 'nullable',
+                'string',
+                'max:4096',
+            ],
+        ]);
+
+        return $this->responder(fn () => [
+            'configuracoes_mensagens' => $this->whatsApp->salvarConfiguracoesMensagens(
+                $this->empresaAtual(),
+                $dados,
+            ),
+        ]);
+    }
+
     public function criarInstancia(): JsonResponse
     {
         return $this->responder(fn () => $this->whatsApp->criarInstancia($this->empresaAtual()), 201);

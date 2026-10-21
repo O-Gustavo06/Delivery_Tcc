@@ -94,34 +94,74 @@ class AdminDashboardController extends Controller
      * Exporta os pedidos reais em CSV (separador ; pra abrir certo no Excel PT-BR, com BOM
      * UTF-8 pra acentuacao nao quebrar).
      */
-    public function exportarRelatorio(): StreamedResponse
+    public function exportarRelatorio(Request $request): StreamedResponse
     {
+        $validated = $request->validate([
+            'start_date' => ['nullable', 'date_format:Y-m-d'],
+            'end_date' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:start_date'],
+            'status' => ['nullable', 'in:PENDENTE,CONFIRMADO,PREPARANDO,PRONTO,ENTREGANDO,FINALIZADO,CANCELADO'],
+            'type' => ['nullable', 'in:DELIVERY,BALCAO,MESA'],
+            'channel' => ['nullable', 'in:ONLINE,PRESENCIAL,IFOOD,99FOOD'],
+            'payment' => ['nullable', 'in:PIX,CARTAO,DINHEIRO'],
+            'columns' => ['sometimes', 'array', 'min:1'],
+            'columns.*' => ['string', 'in:id,date,customer,type,channel,status,payment,total,delivery_fee'],
+        ]);
+
+        $availableColumns = [
+            'id' => 'Pedido',
+            'date' => 'Data',
+            'customer' => 'Cliente',
+            'type' => 'Tipo',
+            'channel' => 'Canal',
+            'status' => 'Status',
+            'payment' => 'Forma de pagamento',
+            'total' => 'Total',
+            'delivery_fee' => 'Taxa de entrega',
+        ];
+        $columns = $validated['columns'] ?? array_keys($availableColumns);
         $companyId = (int) DB::table('empresa')->orderBy('id_empresa')->value('id_empresa');
 
-        $pedidos = Pedido::with(['cliente.usuario', 'pagamento'])
-            ->where('id_empresa', $companyId)
-            ->orderByDesc('dt_pedido')
-            ->get();
+        $query = Pedido::with(['cliente.usuario', 'pagamento'])
+            ->where('id_empresa', $companyId);
+
+        if (!empty($validated['start_date'])) {
+            $query->whereDate('dt_pedido', '>=', $validated['start_date']);
+        }
+        if (!empty($validated['end_date'])) {
+            $query->whereDate('dt_pedido', '<=', $validated['end_date']);
+        }
+        foreach (['status' => 'status', 'type' => 'tipo_pedido', 'channel' => 'canal_origem'] as $filter => $column) {
+            if (!empty($validated[$filter])) {
+                $query->where($column, $validated[$filter]);
+            }
+        }
+        if (!empty($validated['payment'])) {
+            $query->whereHas('pagamento', fn ($paymentQuery) => $paymentQuery->where('forma', $validated['payment']));
+        }
+
+        $pedidos = $query->orderByDesc('dt_pedido')->get();
+        $headers = array_map(fn ($column) => $availableColumns[$column], $columns);
 
         $filename = 'relatorio-pedidos-' . now()->format('Y-m-d_His') . '.csv';
 
-        return response()->streamDownload(function () use ($pedidos) {
+        return response()->streamDownload(function () use ($pedidos, $columns, $headers) {
             $handle = fopen('php://output', 'w');
             fwrite($handle, "\xEF\xBB\xBF");
-            fputcsv($handle, ['Pedido', 'Data', 'Tipo', 'Canal', 'Cliente', 'Status', 'Forma de pagamento', 'Total', 'Taxa de entrega'], ';');
+            fputcsv($handle, $headers, ';');
 
             foreach ($pedidos as $pedido) {
-                fputcsv($handle, [
-                    $pedido->id_pedido,
-                    optional($pedido->dt_pedido)->format('d/m/Y H:i'),
-                    $pedido->tipo_pedido,
-                    $pedido->canal_origem,
-                    $pedido->cliente?->usuario?->nm_usuario ?? 'Cliente',
-                    $pedido->status,
-                    $pedido->pagamento?->forma ?? '-',
-                    number_format((float) $pedido->vl_total, 2, ',', '.'),
-                    number_format((float) $pedido->vl_taxa_entrega, 2, ',', '.'),
-                ], ';');
+                $values = [
+                    'id' => $pedido->id_pedido,
+                    'date' => optional($pedido->dt_pedido)->format('d/m/Y H:i'),
+                    'customer' => $pedido->cliente?->usuario?->nm_usuario ?? 'Cliente',
+                    'type' => $pedido->tipo_pedido,
+                    'channel' => $pedido->canal_origem,
+                    'status' => $pedido->status,
+                    'payment' => $pedido->pagamento?->forma ?? '-',
+                    'total' => number_format((float) $pedido->vl_total, 2, ',', '.'),
+                    'delivery_fee' => number_format((float) $pedido->vl_taxa_entrega, 2, ',', '.'),
+                ];
+                fputcsv($handle, array_map(fn ($column) => $values[$column], $columns), ';');
             }
 
             fclose($handle);
@@ -653,6 +693,7 @@ class AdminDashboardController extends Controller
     private function buildCustomerSegments(): array
     {
         $stats = Cliente::query()
+            ->whereNull('cliente.id_cliente_principal')
             ->select([
                 'cliente.id_cliente',
                 'usuario.nm_usuario as name',
@@ -660,7 +701,10 @@ class AdminDashboardController extends Controller
                 DB::raw('COALESCE(AVG(pedido.vl_total), 0) as average_total'),
             ])
             ->join('usuario', 'usuario.id_usuario', '=', 'cliente.id_usuario')
-            ->leftJoin('pedido', 'pedido.id_cliente', '=', 'cliente.id_cliente')
+            ->leftJoin('pedido', function ($join) {
+                $join->on('pedido.id_cliente', '=', 'cliente.id_cliente')
+                    ->where('pedido.status', '=', 'FINALIZADO');
+            })
             ->groupBy('cliente.id_cliente', 'usuario.nm_usuario')
             ->get();
 
@@ -710,7 +754,11 @@ class AdminDashboardController extends Controller
     private function buildCustomerSpotlight(): array
     {
         $customers = Cliente::query()
-            ->with(['usuario', 'pedidos.itens.produto'])
+            ->whereNull('id_cliente_principal')
+            ->with([
+                'usuario',
+                'pedidos' => fn ($query) => $query->where('status', 'FINALIZADO')->with('itens.produto'),
+            ])
             ->get()
             ->map(function (Cliente $customer) {
                 $favorite = $customer->pedidos
@@ -744,7 +792,9 @@ class AdminDashboardController extends Controller
      */
     private function buildCustomerCampaigns(): array
     {
-        $customers = Cliente::with('pedidos')->get();
+        $customers = Cliente::whereNull('id_cliente_principal')
+            ->with(['pedidos' => fn ($query) => $query->where('status', 'FINALIZADO')])
+            ->get();
         $hoje = now();
 
         $inativos = $customers->filter(function (Cliente $cliente) use ($hoje) {

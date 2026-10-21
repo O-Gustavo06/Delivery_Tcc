@@ -201,6 +201,18 @@ html.cp-pagina body { background: #000; overscroll-behavior-y: none; }
 .cp-qtd span { min-width: 36px; text-align: center; font: 400 1.5rem/1 var(--serif); }
 .cp-campo { display: grid; gap: 8px; margin-top: 18px; }
 .cp-campo > span { font: 500 .62rem/1 var(--sans); letter-spacing: .26em; text-transform: uppercase; color: var(--mut); }
+.cp-cupom { display: flex; gap: 8px; }
+.cp-cupom input { flex: 1; min-width: 0; }
+.cp-cupom button {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--paper);
+  cursor: pointer;
+  font: 500 .8rem var(--sans);
+}
+.cp-cupom button:disabled { opacity: .5; cursor: not-allowed; }
 .cp-site .cp-campo input, .cp-site .cp-campo textarea {
   width: 100%; background: #0d0c0b; color: var(--ink); border: 1px solid var(--line); border-radius: 2px;
   padding: 14px; font: 300 1rem/1.4 var(--sans); outline: none; resize: vertical;

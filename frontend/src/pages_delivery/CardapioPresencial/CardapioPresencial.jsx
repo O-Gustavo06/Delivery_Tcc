@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { resolveApiBase, resolveAssetUrl } from '../../utils/apiBase'
 import { gerarPixCopiaECola } from '../../utils/pix'
+import { aplicarPromocoes } from '../../utils/promotions'
+import usePromotionQuote from '../../hooks/usePromotionQuote'
 import './cardapioPresencial.css'
 
 const API_BASE = resolveApiBase()
@@ -168,20 +170,37 @@ function Painel({ fechar, arrastavel = true, children }) {
   - Com mesa (token): o pedido entra na conta da mesa e vai direto pra cozinha.
   - Sem mesa: vira um pedido de balcão em /pedidos, pago no caixa.
 */
-function FormPedido({ produto, token, voltar, aoEnviar }) {
+function FormPedido({ produto, token, promocoes, voltar, aoEnviar }) {
   const salvo = useMemo(() => lerJson(chaveCliente(token)), [token])
   const [qtd, setQtd] = useState(1)
   const [nome, setNome] = useState(salvo.nome || '')
+  const [telefone, setTelefone] = useState(salvo.telefone || '')
   const [pagamento, setPagamento] = useState('pix')
   const [nota, setNota] = useState('')
+  const [codigoCupom, setCodigoCupom] = useState('')
+  const [cupomAplicado, setCupomAplicado] = useState('')
   const [enviando, setEnviando] = useState(false)
   const [erro, setErro] = useState('')
+  const itensParaCotacao = useMemo(() => [{ id_produto: produto.id, qty: qtd }], [produto.id, qtd])
+  const { quote: cotacaoCupom, error: erroCupom, loading: validandoCupom } = usePromotionQuote({
+    code: cupomAplicado,
+    items: itensParaCotacao,
+    phone: telefone,
+    clientId: token && salvo.nome === nome.trim() ? salvo.idCliente : null,
+  })
+  const precoComPromocao = aplicarPromocoes([produto], promocoes, { [produto.id]: qtd })[0]
+  const totalEstimado = cotacaoCupom?.subtotal ?? precoComPromocao.preco * qtd
+  const descontoCupom = cotacaoCupom?.coupon_discount ?? 0
 
   const enviar = async (e) => {
     e.preventDefault()
     const nomeLimpo = nome.trim()
     if (!nomeLimpo) {
       setErro('Informe seu nome para chamarmos quando o pedido ficar pronto.')
+      return
+    }
+    if (!token && !telefone.trim()) {
+      setErro('Informe seu telefone para identificar o pedido e validar as regras de uso.')
       return
     }
     setEnviando(true)
@@ -191,14 +210,18 @@ function FormPedido({ produto, token, voltar, aoEnviar }) {
     const url = token ? `${API_BASE}/mesa/${token}/pedidos` : `${API_BASE}/presencial/pedidos`
     const corpo = token
       ? {
-          // Mesmo nome de antes -> reaproveita o cliente; nome diferente -> outra pessoa da mesa.
+          // Reaproveita o cliente identificado pelo telefone e, quando disponível, pelo id salvo.
           ...(salvo.idCliente && salvo.nome === nomeLimpo ? { id_cliente: salvo.idCliente } : { nome: nomeLimpo }),
+          telefone: telefone.trim(),
+          coupon_code: cupomAplicado || undefined,
           items: [{ id_produto: produto.id, qty: qtd, note: notaLimpa }],
         }
       : {
           nome: nomeLimpo,
+          telefone: telefone.trim(),
           payment_method: pagamento,
           note: notaLimpa,
+          coupon_code: cupomAplicado || undefined,
           items: [{ id_produto: produto.id, qty: qtd }],
         }
 
@@ -210,13 +233,19 @@ function FormPedido({ produto, token, voltar, aoEnviar }) {
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
-        setErro(data.message || 'Não foi possível enviar o pedido. Tente de novo.')
+        const validationError = Object.values(data.errors || {}).flat()[0]
+        setErro(validationError || data.message || 'Não foi possível enviar o pedido. Tente de novo.')
         return
       }
-      salvarJson(chaveCliente(token), { nome: nomeLimpo, idCliente: data.id_cliente ?? salvo.idCliente })
+      salvarJson(chaveCliente(token), {
+        nome: nomeLimpo,
+        telefone: telefone.trim() || salvo.telefone,
+        idCliente: data.id_cliente ?? salvo.idCliente,
+      })
       aoEnviar({
         numero: token ? data.id_pedido : data.number,
-        total: produto.preco * qtd,
+        total: data.pedido_total ?? data.total ?? totalEstimado,
+        desconto: data.desconto_aplicado ?? data.discount ?? 0,
         qtd,
         comanda: token ? data : null,
       })
@@ -248,6 +277,33 @@ function FormPedido({ produto, token, voltar, aoEnviar }) {
           <input value={nome} onChange={(e) => setNome(e.target.value)} maxLength={150} autoComplete="name" required />
         </label>
 
+        <label className="cp-campo">
+          <span>Seu telefone *</span>
+          <input type="tel" inputMode="tel" value={telefone} onChange={(e) => setTelefone(e.target.value)} maxLength={20} autoComplete="tel" required />
+        </label>
+
+        <label className="cp-campo">
+          <span>Cupom de desconto (opcional)</span>
+          <div className="cp-cupom">
+            <input
+              value={codigoCupom}
+              onChange={(e) => setCodigoCupom(e.target.value.toUpperCase())}
+              placeholder="Digite o código"
+              disabled={Boolean(cupomAplicado)}
+            />
+            {cupomAplicado ? (
+              <button type="button" onClick={() => { setCodigoCupom(''); setCupomAplicado('') }}>Remover</button>
+            ) : (
+              <button type="button" onClick={() => setCupomAplicado(codigoCupom.trim())} disabled={!codigoCupom.trim()}>
+                Aplicar
+              </button>
+            )}
+          </div>
+          {validandoCupom && <small>Validando cupom...</small>}
+          {erroCupom && <small className="cp-erro">{erroCupom}</small>}
+          {cupomAplicado && cotacaoCupom && !erroCupom && <small>Economia do cupom: {formatarPreco(descontoCupom)}</small>}
+        </label>
+
         {!token && (
           <div className="cp-campo">
             <span>Pagamento no caixa</span>
@@ -271,7 +327,10 @@ function FormPedido({ produto, token, voltar, aoEnviar }) {
           <textarea value={nota} onChange={(e) => setNota(e.target.value)} maxLength={300} rows={2} placeholder="Ex.: sem cebola" />
         </label>
 
-        <div className="cp-painel-preco">{formatarPreco(produto.preco * qtd)}</div>
+        <div className="cp-painel-preco">
+          {produto.preco > precoComPromocao.preco && <del>{formatarPreco(produto.preco * qtd)} </del>}
+          {formatarPreco(totalEstimado)}
+        </div>
         {token && <p className="cp-dica">Vai para a conta da mesa. O pagamento é feito no final.</p>}
         {erro && <p className="cp-erro">{erro}</p>}
       </div>
@@ -288,7 +347,7 @@ function FormPedido({ produto, token, voltar, aoEnviar }) {
 }
 
 /* Painel do prato: detalhe -> formulário -> confirmação. */
-function ModalProduto({ produto, token, fechar, contaFechada, aoPedir, etapaInicial = 'detalhe' }) {
+function ModalProduto({ produto, token, promocoes, fechar, contaFechada, aoPedir, etapaInicial = 'detalhe' }) {
   const [etapa, setEtapa] = useState(etapaInicial)
   const [enviado, setEnviado] = useState(null)
   const ingredientes = produto.ingredientes || []
@@ -302,6 +361,7 @@ function ModalProduto({ produto, token, fechar, contaFechada, aoPedir, etapaInic
         <FormPedido
           produto={produto}
           token={token}
+          promocoes={promocoes}
           voltar={() => (etapaInicial === 'pedido' ? fechar() : setEtapa('detalhe'))}
           aoEnviar={(info) => {
             setEnviado(info)
@@ -514,6 +574,7 @@ export default function CardapioPresencial() {
   const [comanda, setComanda] = useState(null)
   const [contaPaga, setContaPaga] = useState(false)
   const [produtos, setProdutos] = useState([])
+  const [promocoes, setPromocoes] = useState([])
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState('')
   const [categoria, setCategoria] = useState('')
@@ -544,6 +605,7 @@ export default function CardapioPresencial() {
       setEmpresa(data.empresa || null)
       setMesa(data.mesa || null)
       setComanda(data.comanda || null)
+      setPromocoes(data.promocoes || [])
       setContaPaga(false)
       setProdutos(
         (data.produtos || []).map((p) => ({
@@ -604,6 +666,11 @@ export default function CardapioPresencial() {
 
   const categoriaAtual = categorias.includes(categoria) ? categoria : categorias[0]
   const lista = produtos.filter((p) => p.categoria === categoriaAtual)
+  const produtosComPreco = useMemo(() => aplicarPromocoes(produtos, promocoes), [produtos, promocoes])
+  const precoPromocionalPorId = useMemo(
+    () => new Map(produtosComPreco.map((produto) => [produto.id, produto.preco])),
+    [produtosComPreco],
+  )
   const contaFechada = comanda?.status === 'AGUARDANDO_PAGAMENTO'
   const qtdItensConta = (comanda?.consumo || []).reduce((soma, item) => soma + item.qty, 0)
 
@@ -745,7 +812,10 @@ export default function CardapioPresencial() {
                     <Media produto={p} ativo={false} className="cp-item-media" />
                   </button>
                   <div className="cp-item-rodape">
-                    <span className="cp-linha-preco">{formatarPreco(p.preco)}</span>
+                    <span className="cp-linha-preco">
+                      {precoPromocionalPorId.get(p.id) < p.preco && <del>{formatarPreco(p.preco)} </del>}
+                      {formatarPreco(precoPromocionalPorId.get(p.id) ?? p.preco)}
+                    </span>
                     <button
                       type="button"
                       className="cp-botao cp-pequeno"
@@ -794,6 +864,7 @@ export default function CardapioPresencial() {
         <ModalProduto
           produto={aberto}
           token={token}
+          promocoes={promocoes}
           fechar={() => setAberto(null)}
           contaFechada={contaFechada}
           etapaInicial={aberto.etapa}

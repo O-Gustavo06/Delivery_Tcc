@@ -10,6 +10,8 @@ use App\Models\Mesa;
 use App\Models\Pagamento;
 use App\Models\Pedido;
 use App\Models\Produto;
+use App\Services\ClienteIdentityService;
+use App\Services\PromocaoService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -61,8 +63,10 @@ class MesaSessionController extends Controller
                 'descricao' => $produto->ds_produto,
                 'preco' => (float) $produto->vl_preco_base,
                 'categoria' => $produto->categoria?->nm_categoria,
+                'categoria_id' => (int) $produto->id_categoria,
                 'imagem' => self::resolveImagemUrl($request, $produto->url_imagem),
             ])->values(),
+            'promocoes' => app(PromocaoService::class)->campanhasPublicas((int) $mesa->id_empresa),
         ]);
     }
 
@@ -142,7 +146,8 @@ class MesaSessionController extends Controller
             'cpf' => ['nullable', 'string', 'max:14'],
         ]);
 
-        $cliente = Cliente::with('usuario')->where('telefone', $data['telefone'])->first();
+        $identity = app(ClienteIdentityService::class);
+        $cliente = $identity->buscarPorTelefone($data['telefone']);
 
         if (!$cliente) {
             if (empty($data['nome'])) {
@@ -152,24 +157,7 @@ class MesaSessionController extends Controller
                 ], 422);
             }
 
-            $cliente = DB::transaction(function () use ($data) {
-                $emailSintetico = strtolower(preg_replace('/\s+/', '.', trim($data['nome'])))
-                    . '+' . now()->timestamp . '@cliente.local';
-
-                $usuario = \App\Models\User::create([
-                    'nm_usuario' => $data['nome'],
-                    'email' => $emailSintetico,
-                    'senha_hash' => bcrypt(Str::random(40)),
-                    'perfil' => 'CLIENTE',
-                    'fl_ativo' => true,
-                ]);
-
-                return Cliente::create([
-                    'id_usuario' => $usuario->id_usuario,
-                    'telefone' => $data['telefone'],
-                    'cpf' => $data['cpf'] ?? null,
-                ])->load('usuario');
-            });
+            $cliente = $identity->buscarOuCriar($data['nome'], $data['telefone'], $data['cpf'] ?? null);
         }
 
         $comanda = self::garantirComandaAberta($mesa);
@@ -201,10 +189,12 @@ class MesaSessionController extends Controller
         $data = $request->validate([
             'id_cliente' => ['nullable', 'integer', 'exists:cliente,id_cliente', 'required_without:nome'],
             'nome' => ['nullable', 'string', 'max:150', 'required_without:id_cliente'],
+            'telefone' => ['nullable', 'string', 'max:20'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.id_produto' => ['required', 'integer', 'exists:produto,id_produto'],
             'items.*.qty' => ['required', 'integer', 'min:1', 'max:50'],
             'items.*.note' => ['nullable', 'string', 'max:300'],
+            'coupon_code' => ['nullable', 'string', 'max:50'],
         ]);
 
         $comanda = $mesa->comandaAberta()->first();
@@ -214,21 +204,17 @@ class MesaSessionController extends Controller
         // Mesa sem comanda (ex.: caixa liberou e o cliente continuou pedindo): reabre na hora.
         $comanda ??= self::garantirComandaAberta($mesa);
 
+        $identity = app(ClienteIdentityService::class);
+        if (!empty($data['id_cliente'])) {
+            $data['id_cliente'] = $identity->resolverPorId((int) $data['id_cliente'])?->id_cliente;
+        } elseif (!empty($data['telefone'])) {
+            $data['id_cliente'] = $identity->buscarPorTelefone($data['telefone'])?->id_cliente;
+        }
+
         if (empty($data['id_cliente'])) {
-            $data['id_cliente'] = DB::transaction(function () use ($data) {
-                $emailSintetico = strtolower(preg_replace('/\s+/', '.', trim($data['nome'])))
-                    . '+' . now()->timestamp . Str::lower(Str::random(4)) . '@cliente.local';
-
-                $usuario = \App\Models\User::create([
-                    'nm_usuario' => trim($data['nome']),
-                    'email' => $emailSintetico,
-                    'senha_hash' => bcrypt(Str::random(40)),
-                    'perfil' => 'CLIENTE',
-                    'fl_ativo' => true,
-                ]);
-
-                return Cliente::create(['id_usuario' => $usuario->id_usuario])->id_cliente;
-            });
+            $data['id_cliente'] = $identity
+                ->buscarOuCriar($data['nome'], $data['telefone'] ?? null)
+                ->id_cliente;
         }
 
         $produtos = Produto::whereIn('id_produto', collect($data['items'])->pluck('id_produto'))
@@ -239,9 +225,17 @@ class MesaSessionController extends Controller
 
         $nomeCliente = !empty($data['nome'])
             ? trim($data['nome'])
-            : Cliente::with('usuario')->find($data['id_cliente'])?->usuario?->nm_usuario;
+            : $identity->resolverPorId((int) $data['id_cliente'])?->usuario?->nm_usuario;
 
-        $pedido = DB::transaction(function () use ($data, $mesa, $comanda, $produtos, $nomeCliente) {
+        [$pedido, $calculation] = DB::transaction(function () use ($data, $mesa, $comanda, $produtos, $nomeCliente) {
+            $calculation = app(PromocaoService::class)->calcular(
+                (int) $mesa->id_empresa,
+                $data['items'],
+                $produtos,
+                $data['coupon_code'] ?? null,
+                (int) $data['id_cliente'],
+                true,
+            );
             // Um pedido so por mesa: enquanto a comanda estiver aberta, cada nova rodada entra no
             // MESMO pedido (lockForUpdate evita dois celulares da mesa criarem dois pedidos juntos).
             // Pedido cancelado/finalizado pelo atendente nao recebe mais itens - ai abre outro.
@@ -281,27 +275,30 @@ class MesaSessionController extends Controller
                 ]);
             }
 
-            foreach ($data['items'] as $item) {
+            foreach ($data['items'] as $index => $item) {
                 $produto = $produtos->get($item['id_produto']);
                 if (!$produto) {
                     continue;
                 }
-
-                ItemPedido::create([
-                    'id_pedido' => $pedido->id_pedido,
-                    'id_produto' => $produto->id_produto,
-                    'nr_quantidade' => $item['qty'],
-                    'vl_preco_unitario' => $produto->vl_preco_base,
-                    'vl_subtotal' => round((float) $produto->vl_preco_base * $item['qty'], 2),
-                    'adicionais_json' => array_filter([
-                        'observacao' => !empty($item['note']) ? mb_strtoupper(trim($item['note'])) : null,
-                        // Quem da mesa pediu (o pedido e um so, mas cada rodada pode ser de alguem).
-                        'cliente' => $nomeCliente,
-                    ]) ?: null,
-                ]);
+                foreach ($calculation['order_items_by_line'][$index] as $preco) {
+                    ItemPedido::create([
+                        'id_pedido' => $pedido->id_pedido,
+                        'id_produto' => $produto->id_produto,
+                        'nr_quantidade' => $preco['qty'],
+                        'vl_preco_unitario' => $preco['unit_price'],
+                        'vl_subtotal' => $preco['subtotal'],
+                        'adicionais_json' => array_filter([
+                            'observacao' => !empty($item['note']) ? mb_strtoupper(trim($item['note'])) : null,
+                            // Quem da mesa pediu (o pedido e um so, mas cada rodada pode ser de alguem).
+                            'cliente' => $nomeCliente,
+                        ]) ?: null,
+                    ]);
+                }
             }
 
             $total = round((float) ItemPedido::where('id_pedido', $pedido->id_pedido)->sum('vl_subtotal'), 2);
+            $pagamento = Pagamento::where('id_pedido', $pedido->id_pedido)->firstOrFail();
+            $descontoAcumulado = round((float) $pagamento->vl_desconto + $calculation['discount'], 2);
             $atualizacao = ['vl_total' => $total];
 
             if ($acrescimo) {
@@ -315,9 +312,14 @@ class MesaSessionController extends Controller
             }
 
             $pedido->update($atualizacao);
-            Pagamento::where('id_pedido', $pedido->id_pedido)->update(['vl_total' => $total, 'vl_final' => $total]);
+            $pagamento->update([
+                'vl_total' => round((float) $pagamento->vl_total + $calculation['original_subtotal'], 2),
+                'vl_desconto' => $descontoAcumulado,
+                'vl_final' => $total,
+            ]);
+            app(PromocaoService::class)->registrarUtilizacoes($calculation, $pedido, (int) $data['id_cliente']);
 
-            return $pedido;
+            return [$pedido, $calculation];
         });
 
         $comanda = $comanda->fresh(['pedidos.itens.produto', 'pedidos.cliente.usuario']);
@@ -326,6 +328,8 @@ class MesaSessionController extends Controller
             ...$this->comandaPayload($comanda),
             'id_cliente' => (int) $data['id_cliente'],
             'id_pedido' => $pedido->id_pedido,
+            'pedido_total' => $calculation['subtotal'],
+            'desconto_aplicado' => $calculation['discount'],
         ], 201);
     }
 

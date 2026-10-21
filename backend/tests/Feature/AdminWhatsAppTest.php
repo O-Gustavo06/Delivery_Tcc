@@ -42,6 +42,32 @@ class AdminWhatsAppTest extends TestCase
         $this->getJson('/api/admin/whatsapp/status')->assertStatus(401);
     }
 
+    public function test_configuracoes_de_mensagens_ficam_persistidas_na_instancia(): void
+    {
+        $empresa = $this->criarEmpresa();
+        $instancia = WhatsappInstance::create([
+            'id_empresa' => $empresa->id_empresa,
+            'nm_instancia' => 'empresa-' . $empresa->id_empresa . '-teste',
+            'status_conexao' => 'open',
+        ]);
+
+        $this->putJson('/api/admin/whatsapp/configuracoes-mensagens', [
+            'mensagem_pos_venda' => 'Como foi sua experiencia?',
+            'resposta_automatica_ativa' => true,
+            'mensagem_resposta_automatica' => 'Recebemos seu contato.',
+        ], $this->headers())
+            ->assertOk()
+            ->assertJsonPath('configuracoes_mensagens.mensagem_pos_venda', 'Como foi sua experiencia?')
+            ->assertJsonPath('configuracoes_mensagens.resposta_automatica_ativa', true)
+            ->assertJsonPath('configuracoes_mensagens.mensagem_resposta_automatica', 'Recebemos seu contato.');
+
+        $this->assertSame([
+            'pos_venda' => 'Como foi sua experiencia?',
+            'resposta_automatica_ativa' => true,
+            'resposta_automatica' => 'Recebemos seu contato.',
+        ], $instancia->fresh()->configuracoes['mensagens']);
+    }
+
     public function test_criar_instancia_persiste_registro_e_devolve_qrcode(): void
     {
         $empresa = $this->criarEmpresa(['nm_empresa' => 'Pizzaria Teste']);

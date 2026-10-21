@@ -30,7 +30,7 @@ const ORDER_STAGES = [
   { id: 'delivery', title: 'Em entrega', description: 'Com o entregador', statuses: ['saiu_entrega'] },
 ]
 
-const CLOSED_STATUSES = ['entregue', 'cancelado']
+const ACTIVE_ORDER_STATUSES = ORDER_STAGES.flatMap((stage) => stage.statuses)
 
 function PedidoQrModal({ order, onClose }) {
   const [qrDataUrl, setQrDataUrl] = useState('')
@@ -103,11 +103,7 @@ export default function Pedidos({ orders, filters, setFilters, statusLabels, sta
     const search = filters.search.trim().toLowerCase()
 
     return orders.filter((order) => {
-      const matchesStatus =
-        filters.status === 'all' ||
-        (filters.status === 'closed'
-          ? CLOSED_STATUSES.includes(order.status)
-          : order.status === filters.status)
+      const matchesStatus = filters.status === 'all' || order.status === filters.status
       const matchesType = filters.type === 'all' || order.type === filters.type
       const matchesSearch =
         !search ||
@@ -288,12 +284,13 @@ export default function Pedidos({ orders, filters, setFilters, statusLabels, sta
             }
           >
             <option value="all">Todos</option>
-            <option value="closed">Encerrados</option>
-            {Object.entries(statusLabels).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
+            {Object.entries(statusLabels)
+              .filter(([value]) => ACTIVE_ORDER_STATUSES.includes(value))
+              .map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
           </select>
         </div>
         <div className="filter-group">
@@ -333,11 +330,10 @@ export default function Pedidos({ orders, filters, setFilters, statusLabels, sta
           { label: 'Preparando', value: 'em_preparo', count: counts.em_preparo },
           { label: 'Prontos', value: 'pronto', count: counts.pronto },
           { label: 'Entrega', value: 'saiu_entrega', count: counts.saiu_entrega },
-          { label: 'Encerrados', value: 'closed', count: counts.entregue + counts.cancelado },
         ].map((tab) => (
           <button
             key={tab.value}
-            className={`tab ${filters.status === tab.value || (tab.value === 'closed' && CLOSED_STATUSES.includes(filters.status)) ? 'active' : ''}`}
+            className={`tab ${filters.status === tab.value ? 'active' : ''}`}
             data-tab={tab.value}
             type="button"
             onClick={() => setFilters((prev) => ({ ...prev, status: tab.value }))}
@@ -506,55 +502,6 @@ export default function Pedidos({ orders, filters, setFilters, statusLabels, sta
           )
           })}
         </section>
-      )}
-
-      {filtered.some((order) => CLOSED_STATUSES.includes(order.status)) && (
-        <details
-          className="orders-closed"
-          open={filters.status === 'closed' || CLOSED_STATUSES.includes(filters.status) || undefined}
-        >
-          <summary>
-            <span>Pedidos encerrados</span>
-            <span className="orders-lane-count">
-              {filtered.filter((order) => CLOSED_STATUSES.includes(order.status)).length}
-            </span>
-          </summary>
-          <div className="orders-closed-list">
-            {filtered
-              .filter((order) => CLOSED_STATUSES.includes(order.status))
-              .sort((left, right) => right.number - left.number)
-              .map((order, index) => (
-                <article
-                  className="order-card order-card-closed"
-                  data-status={order.status}
-                  key={order.id}
-                  style={{ '--i': index }}
-                >
-                  <div className="order-header">
-                    <div className="orders-closed-title">
-                      <span className="order-number">#{order.number}</span>
-                      <span className={`badge ${statusTone[order.status]}`}>{statusLabels[order.status]}</span>
-                    </div>
-                    <span className="order-time">{order.createdAt}</span>
-                  </div>
-                  <div className="order-body">
-                    <div>
-                      <h3>{order.customerName}</h3>
-                      <p
-                        title={order.type === 'mesa' ? `Mesa ${order.tableNumber}` : order.address}
-                      >
-                        {order.type === 'mesa' ? `Mesa ${order.tableNumber}` : order.address}
-                      </p>
-                    </div>
-                    <div className="order-total">
-                      <span>Total</span>
-                      <strong>{formatMoney(order.total)}</strong>
-                    </div>
-                  </div>
-                </article>
-              ))}
-          </div>
-        </details>
       )}
 
       {filtered.length === 0 && (

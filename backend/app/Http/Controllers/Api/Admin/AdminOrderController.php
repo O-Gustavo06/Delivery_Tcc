@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\Cliente;
 use App\Models\Entrega;
 use App\Models\EstoqueMovimento;
 use App\Models\Ingrediente;
@@ -12,6 +11,7 @@ use App\Models\Pagamento;
 use App\Models\Pedido;
 use App\Models\Produto;
 use App\Models\ProdutoIngrediente;
+use App\Services\ClienteIdentityService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -208,23 +208,12 @@ class AdminOrderController extends Controller
                 abort(422, 'Nenhuma empresa cadastrada para receber pedidos.');
             }
 
-            $customerEmail = strtolower(preg_replace('/\s+/', '.', trim($data['customer_name']))) . '+' . now()->timestamp . '@cliente.local';
-            $userId = DB::table('usuario')->insertGetId([
-                'nm_usuario' => $data['customer_name'],
-                'email' => $customerEmail,
-                'senha_hash' => bcrypt('cliente123'),
-                'perfil' => 'CLIENTE',
-                'fl_ativo' => 1,
-                'dt_cadastro' => now(),
-                'dt_atualizacao' => now(),
-            ]);
-
-            $clientId = DB::table('cliente')->insertGetId([
-                'id_usuario' => $userId,
-                'telefone' => $data['customer_phone'] ?? null,
-                'cpf' => null,
-                'dt_cadastro' => now(),
-            ]);
+            $telefoneIdentidade = ClienteIdentityService::normalizarTelefone($data['customer_phone'] ?? null)
+                ? ($data['customer_phone'] ?? null)
+                : null;
+            $cliente = app(ClienteIdentityService::class)
+                ->buscarOuCriar($data['customer_name'], $telefoneIdentidade);
+            $clientId = $cliente->id_cliente;
 
             $mesaId = null;
             if ($data['type'] === 'mesa') {
@@ -413,6 +402,10 @@ class AdminOrderController extends Controller
         // outros status (ex: preparo na cozinha) não devem sobrescrever o progresso do motoboy.
         if ($order->entrega && $statusEntrega) {
             $order->entrega->update(['status_entrega' => $statusEntrega]);
+        }
+
+        if ($previousStatus !== 'FINALIZADO' && $dbStatus === 'FINALIZADO' && $order->tipo_pedido !== 'MESA') {
+            app(\App\Services\PosVendaService::class)->agendarPedido($order->fresh('cliente'));
         }
 
         return response()->json($this->toPayload($order->fresh(['cliente.usuario', 'mesa', 'itens.produto', 'entrega', 'pagamento'])));

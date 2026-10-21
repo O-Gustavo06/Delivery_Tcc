@@ -69,4 +69,11 @@ return [
         'ca_bundle' => env('ASAAS_CA_BUNDLE'),
     ],
 
+    'pos_venda' => [
+        'delay_minutes' => (int) env(
+            'POS_VENDA_DELAY_MINUTES',
+            in_array(env('APP_ENV'), ['local', 'testing'], true) ? 0 : 10
+        ),
+    ],
+
 ];

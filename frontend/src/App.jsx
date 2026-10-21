@@ -7,11 +7,12 @@ import Painel from './pages/Painel.jsx'
 import Cozinha from './pages/Cozinha.jsx'
 import Mesas from './pages/Mesas.jsx'
 import Entrega from './pages/Entrega.jsx'
-import Financeiro from './pages/Financeiro.jsx'
 import Relatorios from './pages/Relatorios.jsx'
 import Compras from './pages/Compras.jsx'
 import Cardapio from './pages/Cardapio.jsx'
+import Promocoes from './pages/Promocoes.jsx'
 import Clientes from './pages/Clientes.jsx'
+import Crescimento from './pages/Crescimento.jsx'
 import Pedidos_Ifood from './pages/Pedidos_Ifood.jsx'
 import WhatsApp from './pages/whatsApp.jsx'
 import CardapioPublico from './pages_delivery/CardapioPublico.jsx'
@@ -57,6 +58,7 @@ const routes = [
   { path: '/pedidos', label: 'Pedidos', code: 'PD' },
   { path: '/cardapio/pedidos', label: 'Pedidos Online', code: 'PO' },
   { path: '/cardapio', label: 'Cardapio', code: 'CD' },
+  { path: '/promocoes', label: 'Promoções', code: 'PR' },
   { path: '/cardapio/presencial', label: 'Cardápio Presencial', code: 'CPR' },
   { path: '/motoboy/', label: 'Motoboy', code: 'MB' },
   { path: '/cozinha', label: 'Cozinha', code: 'CZ' },
@@ -64,16 +66,16 @@ const routes = [
   { path: '/entrega', label: 'Entrega', code: 'EN' },
   { path: '/usuarios', label: 'Usuarios', code: 'US' },
   { path: '/financeiro', label: 'Financeiro', code: 'FN' },
-  { path: '/relatorios', label: 'Relatorios', code: 'RL' },
   { path: '/compras', label: 'Compras e Lucros', code: 'CP' },
   { path: '/clientes', label: 'Clientes', code: 'CL' },
+  { path: '/crescimento', label: 'Crescimento', code: 'CR' },
   { path: '/pedidos_ifood', label: 'Pedidos iFood', code: 'IF' },
   { path: '/whatsapp', label: 'WhatsApp', code: 'WA' },
 ]
 
 const navGroups = [
   { label: 'Operação', paths: ['/painel', '/pedidos', '/cardapio', '/cozinha', '/mesas', '/entrega'] },
-  { label: 'Gestão', paths: ['/usuarios', '/financeiro', '/relatorios', '/compras', '/clientes'] },
+  { label: 'Gestão', paths: ['/usuarios', '/compras', '/clientes', '/crescimento', '/promocoes'] },
   { label: 'Canais', paths: ['/pedidos_ifood', '/whatsapp'] },
 ]
 
@@ -468,6 +470,55 @@ export default function App() {
     setDashboardData(mergeDashboardData(payload))
   }, [getAuthToken])
 
+  const fetchAdminInsight = useCallback(async (path) => {
+    const token = await getAuthToken()
+    if (!token) {
+      return { ok: false, message: 'Sua sessão expirou. Entre novamente para consultar esses dados.' }
+    }
+
+    const response = await fetch(`${API_BASE}/admin/${path}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    })
+    const responseText = await response.text()
+    let payload
+
+    try {
+      payload = responseText ? JSON.parse(responseText) : null
+    } catch {
+      return {
+        ok: false,
+        message: `A API retornou uma resposta que não é JSON (HTTP ${response.status}). Verifique o endereço da API e se o backend está ativo.`,
+      }
+    }
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        message: payload?.message || `Não foi possível carregar os dados (HTTP ${response.status}).`,
+      }
+    }
+
+    return { ok: true, data: payload }
+  }, [getAuthToken])
+
+  const fetchGrowthData = useCallback((inicio, fim) => {
+    const params = new URLSearchParams({ inicio, fim })
+    return fetchAdminInsight(`growth?${params.toString()}`)
+  }, [fetchAdminInsight])
+
+  const fetchCustomers = useCallback((busca, page = 1) => {
+    const params = new URLSearchParams({ por_pagina: '25', page: String(page) })
+    if (busca) params.set('busca', busca)
+    return fetchAdminInsight(`customers?${params.toString()}`)
+  }, [fetchAdminInsight])
+
+  const fetchCustomerAudit = useCallback((id) => (
+    fetchAdminInsight(`customers/${encodeURIComponent(id)}/audit`)
+  ), [fetchAdminInsight])
+
   const fetchIngredientes = useCallback(async () => {
     const token = await getAuthToken()
     if (!token) return null
@@ -689,6 +740,25 @@ export default function App() {
     return { ok: true, message: '', data: await response.json() }
   }, [getAuthToken])
 
+  const salvarConfiguracoesMensagensWhatsapp = useCallback(async (configuracoes) => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+    const response = await fetch(`${API_BASE}/admin/whatsapp/configuracoes-mensagens`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(configuracoes),
+    })
+
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => ({}))
+      return { ok: false, message: errorPayload.message || 'Falha ao salvar as mensagens do WhatsApp.' }
+    }
+
+    const resultado = await response.json()
+    return { ok: true, message: '', data: resultado.configuracoes_mensagens }
+  }, [getAuthToken])
+
   const fetchWhatsappConversas = useCallback(async () => {
     const token = await getAuthToken()
     if (!token) return null
@@ -759,6 +829,41 @@ export default function App() {
     if (!response.ok) return null
 
     return response.json()
+  }, [getAuthToken])
+
+  const fetchPromocoes = useCallback(async () => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+    const response = await fetch(`${API_BASE}/admin/promocoes`, {
+      headers: { Authorization: ['Be', 'arer'].join('') + ' ' + token },
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) return { ok: false, message: payload.message || 'Não foi possível carregar as promoções.' }
+    return { ok: true, data: payload.data || [] }
+  }, [getAuthToken])
+
+  const salvarPromocao = useCallback(async (id, payload) => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+    const response = await fetch(`${API_BASE}/admin/promocoes${id ? `/${id}` : ''}`, {
+      method: id ? 'PATCH' : 'POST',
+      headers: {
+        Authorization: ['Be', 'arer'].join('') + ' ' + token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      const validationMessage = Object.values(result.errors || {}).flat()[0]
+      return {
+        ok: false,
+        message: validationMessage || result.message || `Não foi possível salvar a promoção (HTTP ${response.status}).`,
+      }
+    }
+    return { ok: true, data: result.data }
   }, [getAuthToken])
 
   const criarProduto = useCallback(
@@ -1097,16 +1202,26 @@ export default function App() {
     [getAuthToken, fetchDashboardFromApi],
   )
 
-  const exportarRelatorio = useCallback(async () => {
+  const exportarRelatorio = useCallback(async (filters) => {
     const token = await getAuthToken()
     if (!token) return { ok: false, message: 'Sem token de acesso.' }
 
-    const response = await fetch(`${API_BASE}/admin/relatorios/export`, {
+    const params = new URLSearchParams()
+    Object.entries(filters).forEach(([key, value]) => {
+      if (key === 'columns') {
+        value.forEach((column) => params.append('columns[]', column))
+      } else if (value) {
+        params.set(key, value)
+      }
+    })
+
+    const response = await fetch(`${API_BASE}/admin/relatorios/export?${params.toString()}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
 
     if (!response.ok) {
-      return { ok: false, message: 'Falha ao gerar o relatorio.' }
+      const errorPayload = await response.json().catch(() => ({}))
+      return { ok: false, message: errorPayload.message || 'Falha ao gerar o relatório.' }
     }
 
     const blob = await response.blob()
@@ -1320,14 +1435,16 @@ export default function App() {
       '/painel': 'Visao executiva da operacao em tempo real',
       '/pedidos': 'Controle central de pedidos',
       '/cardapio': 'Itens, precos e categorias do cardapio',
+      '/promocoes': 'Descontos, cupons e regras de utilização',
       '/cozinha': 'Fila de preparo e expedição da cozinha',
       '/mesas': 'Ocupacao, reservas e fila de espera do salao',
       '/entrega': 'Rotas, motoboys e monitoramento de entregas',
       '/usuarios': 'Gestao de perfis e acessos internos',
-      '/financeiro': 'Fluxo de caixa, comissoes e fechamento diario',
+      '/financeiro': 'Fluxo de caixa, pagamentos e fechamento diário',
       '/relatorios': 'Indicadores operacionais e financeiros consolidados',
       '/compras': 'Compras, estoque de ingredientes e lucro mensal',
       '/clientes': 'Base de clientes, segmentos e campanhas',
+      '/crescimento': 'Vendas, finanças, recorrência e satisfação dos clientes',
       '/pedidos_ifood': 'Integracoes com apps, canais externos e cadastro do cardapio online',
       '/whatsapp': 'Atendimento, automacoes e campanhas no WhatsApp',
     }
@@ -1508,6 +1625,14 @@ export default function App() {
               onSalvarReceita={salvarReceitaProduto}
             />
           )}
+          {route === '/promocoes' && (
+            <Promocoes
+              onFetchPromocoes={fetchPromocoes}
+              onFetchProdutos={fetchProdutos}
+              onFetchCategorias={fetchCategorias}
+              onSalvarPromocao={salvarPromocao}
+            />
+          )}
           {route === '/usuarios' && (
             <Usuarios
               users={users}
@@ -1551,9 +1676,12 @@ export default function App() {
               onFetchEntregadorEntregas={fetchEntregadorEntregas}
             />
           )}
-          {route === '/financeiro' && (
-            <Financeiro
+          {(route === '/crescimento' || route === '/financeiro') && (
+            <Crescimento
+              key={route}
               financeData={dashboardData.financeData}
+              onFetchGrowth={fetchGrowthData}
+              onNavigate={navigate}
               onVerPedido={(numero) => {
                 setFilters({ search: String(numero), status: 'all', type: 'all' })
                 navigate('/pedidos')
@@ -1561,9 +1689,7 @@ export default function App() {
               onAtualizarChecklist={atualizarChecklistFinanceiro}
             />
           )}
-          {route === '/relatorios' && (
-            <Relatorios reportsData={dashboardData.reportsData} onExportar={exportarRelatorio} />
-          )}
+          {route === '/relatorios' && <Relatorios onExportar={exportarRelatorio} />}
           {route === '/compras' && (
             <Compras
               onFetchIngredientes={fetchIngredientes}
@@ -1575,7 +1701,13 @@ export default function App() {
               onRegistrarMovimentoAvulso={registrarMovimentoAvulso}
             />
           )}
-          {route === '/clientes' && <Clientes customersData={dashboardData.customersData} />}
+          {route === '/clientes' && (
+            <Clientes
+              customersData={dashboardData.customersData}
+              onFetchCustomers={fetchCustomers}
+              onFetchCustomerAudit={fetchCustomerAudit}
+            />
+          )}
           {route === '/pedidos_ifood' && <Pedidos_Ifood marketplaceData={dashboardData.marketplaceData} />}
           {route === '/whatsapp' && (
             <WhatsApp
@@ -1584,6 +1716,7 @@ export default function App() {
               onGerarQrCode={gerarWhatsappQrCode}
               onDesconectar={desconectarWhatsapp}
               onReconectar={reconectarWhatsapp}
+              onSalvarConfiguracoesMensagens={salvarConfiguracoesMensagensWhatsapp}
               onFetchConversas={fetchWhatsappConversas}
               onFetchMensagens={fetchWhatsappMensagens}
               onEnviarMensagem={enviarWhatsappMensagem}

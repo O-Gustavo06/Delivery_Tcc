@@ -80,6 +80,7 @@ export default function WhatsApp({
   onGerarQrCode,
   onDesconectar,
   onReconectar,
+  onSalvarConfiguracoesMensagens,
   onFetchConversas,
   onFetchMensagens,
   onEnviarMensagem,
@@ -96,6 +97,14 @@ export default function WhatsApp({
   const [textoEnvio, setTextoEnvio] = useState('')
   const [enviando, setEnviando] = useState(false)
   const [erroEnvio, setErroEnvio] = useState('')
+  const [configuracoesAbertas, setConfiguracoesAbertas] = useState(false)
+  const [mensagemPosVenda, setMensagemPosVenda] = useState('')
+  const [respostaAutomaticaAtiva, setRespostaAutomaticaAtiva] = useState(false)
+  const [mensagemRespostaAutomatica, setMensagemRespostaAutomatica] = useState('')
+  const [salvandoConfiguracoes, setSalvandoConfiguracoes] = useState(false)
+  const [erroConfiguracoes, setErroConfiguracoes] = useState('')
+  const [sucessoConfiguracoes, setSucessoConfiguracoes] = useState('')
+  const configuracoesInicializadasRef = useRef(false)
   const pollRef = useRef(null)
   const pollConversasRef = useRef(null)
   const pollMensagensRef = useRef(null)
@@ -114,6 +123,16 @@ export default function WhatsApp({
     }
     return resultado
   }, [onFetchStatus])
+
+  useEffect(() => {
+    const configuracoes = dados.configuracoes_mensagens
+    if (!configuracoes || configuracoesInicializadasRef.current) return
+
+    setMensagemPosVenda(configuracoes.mensagem_pos_venda)
+    setRespostaAutomaticaAtiva(configuracoes.resposta_automatica_ativa)
+    setMensagemRespostaAutomatica(configuracoes.mensagem_resposta_automatica)
+    configuracoesInicializadasRef.current = true
+  }, [dados.configuracoes_mensagens])
 
   const carregarConversas = useCallback(async () => {
     const resultado = await onFetchConversas()
@@ -241,6 +260,39 @@ export default function WhatsApp({
       return { ok: true, data: statusAtual }
     })
 
+  const handleSalvarConfiguracoes = async (event) => {
+    event.preventDefault()
+    setErroConfiguracoes('')
+    setSucessoConfiguracoes('')
+    setSalvandoConfiguracoes(true)
+
+    let resultado
+    try {
+      resultado = await onSalvarConfiguracoesMensagens({
+        mensagem_pos_venda: mensagemPosVenda,
+        resposta_automatica_ativa: respostaAutomaticaAtiva,
+        mensagem_resposta_automatica: mensagemRespostaAutomatica,
+      })
+    } catch (error) {
+      setErroConfiguracoes(error.message || 'Nao foi possivel salvar as configuracoes.')
+      setSalvandoConfiguracoes(false)
+      return
+    }
+    setSalvandoConfiguracoes(false)
+
+    if (!resultado?.ok) {
+      setErroConfiguracoes(resultado?.message || 'Nao foi possivel salvar as configuracoes.')
+      return
+    }
+
+    const configuracoes = resultado.data
+    setMensagemPosVenda(configuracoes.mensagem_pos_venda)
+    setRespostaAutomaticaAtiva(configuracoes.resposta_automatica_ativa)
+    setMensagemRespostaAutomatica(configuracoes.mensagem_resposta_automatica)
+    setDados((anterior) => ({ ...anterior, configuracoes_mensagens: configuracoes }))
+    setSucessoConfiguracoes('Configuracoes salvas.')
+  }
+
   const status = dados.status || 'inexistente'
   const conectado = status === 'open'
 
@@ -253,9 +305,26 @@ export default function WhatsApp({
               <h2>WhatsApp</h2>
               <p>Conecte o WhatsApp da sua empresa para atender clientes e automatizar avisos de pedido.</p>
             </div>
-            <span className={`badge ${STATUS_BADGE[status] ?? 'badge-muted'}`}>
-              {STATUS_LABEL[status] ?? status}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              {dados.existe && (
+                <button
+                  className="btn btn-light"
+                  type="button"
+                  aria-expanded={configuracoesAbertas}
+                  onClick={() => setConfiguracoesAbertas((abertas) => !abertas)}
+                >
+                  {configuracoesAbertas ? 'Fechar mensagens' : 'Configurar mensagens'}
+                </button>
+              )}
+              {dados.configuracoes_mensagens && (
+                <span className={`badge ${dados.configuracoes_mensagens.resposta_automatica_ativa ? 'badge-green' : 'badge-muted'}`}>
+                  Resposta automática {dados.configuracoes_mensagens.resposta_automatica_ativa ? 'ativa' : 'desativada'}
+                </span>
+              )}
+              <span className={`badge ${STATUS_BADGE[status] ?? 'badge-muted'}`}>
+                {STATUS_LABEL[status] ?? status}
+              </span>
+            </div>
           </div>
 
           {loading ? (
@@ -328,6 +397,78 @@ export default function WhatsApp({
             </div>
           )}
         </article>
+
+        {dados.existe && configuracoesAbertas && (
+          <article className="card section-card fade-in">
+            <div className="section-head">
+              <div>
+                <h2>Mensagens automáticas</h2>
+                <p>Edite a pesquisa pós-venda e configure uma resposta para novos contatos.</p>
+              </div>
+            </div>
+            <form onSubmit={handleSalvarConfiguracoes} style={{ display: 'grid', gap: 16 }}>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <strong>Mensagem de satisfação pós-venda</strong>
+                <small style={{ color: 'var(--muted)' }}>Enviada após a conclusão do pedido ou pagamento da comanda.</small>
+                <textarea
+                  value={mensagemPosVenda}
+                  onChange={(event) => setMensagemPosVenda(event.target.value)}
+                  maxLength={4096}
+                  required
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    resize: 'vertical',
+                    padding: '10px 12px',
+                    color: 'var(--text)',
+                    font: 'inherit',
+                    border: '1px solid var(--line)',
+                    borderRadius: 8,
+                    background: 'var(--panel)',
+                  }}
+                />
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={respostaAutomaticaAtiva}
+                  onChange={(event) => setRespostaAutomaticaAtiva(event.target.checked)}
+                />
+                <strong>Ativar resposta automática para contatos</strong>
+              </label>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <strong>Mensagem automática de atendimento</strong>
+                <small style={{ color: 'var(--muted)' }}>Enviada no primeiro contato e no máximo uma vez a cada 24 horas por telefone.</small>
+                <textarea
+                  value={mensagemRespostaAutomatica}
+                  onChange={(event) => setMensagemRespostaAutomatica(event.target.value)}
+                  maxLength={4096}
+                  required={respostaAutomaticaAtiva}
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    resize: 'vertical',
+                    padding: '10px 12px',
+                    color: 'var(--text)',
+                    font: 'inherit',
+                    border: '1px solid var(--line)',
+                    borderRadius: 8,
+                    background: 'var(--panel)',
+                  }}
+                />
+              </label>
+              {erroConfiguracoes && <p role="alert" style={{ color: 'var(--danger)', margin: 0 }}>{erroConfiguracoes}</p>}
+              {sucessoConfiguracoes && <p role="status" style={{ color: 'var(--success)', margin: 0 }}>{sucessoConfiguracoes}</p>}
+              <div>
+                <button className="btn btn-primary" type="submit" disabled={salvandoConfiguracoes}>
+                  {salvandoConfiguracoes ? 'Salvando...' : 'Salvar mensagens'}
+                </button>
+              </div>
+            </form>
+          </article>
+        )}
 
         <article className="card section-card fade-in" style={{ '--i': 1 }}>
           <div className="section-head">

@@ -15,6 +15,7 @@ class WhatsappMensagem extends Model
     protected $fillable = [
         'id_whatsapp_instancia',
         'id_cliente',
+        'id_pos_venda',
         'direcao',
         'telefone',
         'nome_contato',
@@ -40,5 +41,10 @@ class WhatsappMensagem extends Model
     public function cliente()
     {
         return $this->belongsTo(Cliente::class, 'id_cliente', 'id_cliente');
+    }
+
+    public function posVenda()
+    {
+        return $this->belongsTo(PosVenda::class, 'id_pos_venda', 'id_pos_venda');
     }
 }

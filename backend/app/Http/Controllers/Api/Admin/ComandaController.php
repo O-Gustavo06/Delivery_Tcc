@@ -59,6 +59,10 @@ class ComandaController extends Controller
             }
         });
 
+        app(\App\Services\PosVendaService::class)->agendarComanda(
+            $comanda->fresh(['pedidos.cliente'])
+        );
+
         return response()->json($this->toPayload($comanda->fresh(['mesa', 'pedidos.itens.produto', 'pedidos.cliente.usuario'])));
     }
 

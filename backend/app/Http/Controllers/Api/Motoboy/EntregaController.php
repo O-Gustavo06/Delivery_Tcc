@@ -84,6 +84,10 @@ class EntregaController extends Controller
             }
         });
 
+        if ($entrega->pedido) {
+            app(\App\Services\PosVendaService::class)->agendarPedido($entrega->pedido->fresh('cliente'));
+        }
+
         return response()->json(['message' => 'Entrega concluída.', 'status_entrega' => $entrega->fresh()->status_entrega]);
     }
 
