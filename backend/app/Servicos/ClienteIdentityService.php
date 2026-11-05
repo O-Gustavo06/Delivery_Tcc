@@ -109,4 +109,19 @@ class ClienteIdentityService
             throw $exception;
         }
     }
+
+    public function criarConvidadoPedidoOnline(string $nome): Cliente
+    {
+        $usuario = User::create([
+            'nm_usuario' => trim($nome),
+            'email' => 'pedido-online+' . Str::uuid() . '@cliente.local',
+            'senha_hash' => bcrypt(Str::random(40)),
+            'perfil' => 'CLIENTE',
+            'fl_ativo' => true,
+        ]);
+
+        return Cliente::create([
+            'id_usuario' => $usuario->id_usuario,
+        ]);
+    }
 }

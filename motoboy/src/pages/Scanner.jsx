@@ -16,7 +16,10 @@ export default function Scanner({
   const frameRef = useRef(null)
   const lastCodeRef = useRef('')
   const [cameraError, setCameraError] = useState('')
+  const [insecureAddress, setInsecureAddress] = useState(false)
   const [manualCode, setManualCode] = useState('')
+  const localCameraUrl = new URL(window.location.href)
+  localCameraUrl.hostname = 'localhost'
 
   const stopCamera = useCallback(() => {
     if (frameRef.current) cancelAnimationFrame(frameRef.current)
@@ -67,8 +70,19 @@ export default function Scanner({
           await videoRef.current.play()
         }
         frameRef.current = requestAnimationFrame(tick)
-      } catch {
-        setCameraError('Nao foi possivel acessar a camera. Digite o codigo manualmente abaixo.')
+      } catch (err) {
+        // Diz o motivo de verdade: sem isso o motoboy nao sabe se precisa liberar a permissao
+        // ou se o problema e o endereco (http) - e a causa mais comum pelo IP da rede.
+        let motivo = 'Nao foi possivel acessar a camera.'
+        if (!window.isSecureContext || !navigator.mediaDevices) {
+          setInsecureAddress(!window.isSecureContext)
+          motivo = 'A camera so funciona em conexao segura (HTTPS ou localhost).'
+        } else if (err?.name === 'NotAllowedError') {
+          motivo = 'Permissao da camera negada. Libere a camera nas configuracoes do navegador.'
+        } else if (err?.name === 'NotFoundError') {
+          motivo = 'Nenhuma camera encontrada neste aparelho.'
+        }
+        setCameraError(`${motivo} Digite o codigo manualmente abaixo.`)
       }
     }
 
@@ -102,6 +116,18 @@ export default function Scanner({
           {cameraError ? 'Camera indisponivel' : busy ? hintBusy : hintIdle}
         </div>
       </div>
+
+      {cameraError && (
+        <div className="notice notice-warning" style={{ marginTop: 12 }}>
+          {cameraError}
+          {insecureAddress && (
+            <p className="camera-help-link">
+              No mesmo computador, abra{' '}
+              <a href={localCameraUrl.href}>{localCameraUrl.href}</a>. Em outro aparelho, o acesso pela rede precisa ser HTTPS.
+            </p>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="notice notice-danger" style={{ marginTop: 12 }}>

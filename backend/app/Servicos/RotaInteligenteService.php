@@ -6,6 +6,7 @@ use App\Models\Entrega;
 use App\Models\Entregador;
 use App\Models\RotaEntrega;
 use App\Models\RotaEntregaItem;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -24,6 +25,10 @@ class RotaInteligenteService
         // 1) Esse pedido já pertence a uma rota (outro item do grupo já foi bipado antes)?
         $itemExistente = $entrega->rotaEntregaItem()->with('rota.itens.entrega.pedido')->first();
         if ($itemExistente) {
+            if ((int) $itemExistente->rota->id_entregador !== (int) $entregador->id_entregador) {
+                throw new AuthorizationException('Esta rota pertence a outro entregador.');
+            }
+
             return $itemExistente->rota;
         }
 

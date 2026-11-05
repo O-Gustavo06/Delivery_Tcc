@@ -1,8 +1,5 @@
 import React, { useState } from 'react'
 import EnderecoPorCep from '../pages_delivery/EnderecoPorCep.jsx'
-import { resolveApiBase } from '../utils/apiBase'
-
-const API_BASE = resolveApiBase()
 
 const emptyItem = () => ({ name: '', qty: '1', price: '', note: '' })
 
@@ -23,22 +20,6 @@ export default function NovoPedidoModal({ onCreate, onClose }) {
   const [items, setItems] = useState([emptyItem()])
   const [error, setError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
-
-  const buscarNomePeloTelefone = async (telefone) => {
-    const digits = telefone.replace(/\D/g, '')
-    if (digits.length < 10) return
-
-    try {
-      const response = await fetch(`${API_BASE}/pedir/cliente/${digits}`, { headers: { Accept: 'application/json' } })
-      if (!response.ok) return
-      const payload = await response.json()
-      if (payload.nome && !customerName.trim()) {
-        setCustomerName(payload.nome)
-      }
-    } catch {
-      // sem sorte, sem problema: admin digita o nome normalmente
-    }
-  }
 
   const updateItem = (index, field, value) => {
     setItems((prev) => prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)))
@@ -166,7 +147,6 @@ export default function NovoPedidoModal({ onCreate, onClose }) {
                 autoComplete="tel"
                 value={customerPhone}
                 onChange={(event) => setCustomerPhone(event.target.value)}
-                onBlur={(event) => buscarNomePeloTelefone(event.target.value)}
               />
             </div>
 

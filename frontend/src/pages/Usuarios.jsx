@@ -38,11 +38,14 @@ function PairingQrPanel({ pairing, onClose }) {
   )
 }
 
-export default function Usuarios({ users, onCreateUser, onLoadUsers, onRegeneratePairingCode }) {
+export default function Usuarios({ users, onCreateUser, onUpdateUser, onDeleteUser, onLoadUsers, onRegeneratePairingCode }) {
   const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [isUpdating, setIsUpdating] = useState(false)
   const [role, setRole] = useState('ADMIN')
   const [pairing, setPairing] = useState(null)
+  const [editingUser, setEditingUser] = useState(null)
 
   useEffect(() => {
     void onLoadUsers()
@@ -92,6 +95,50 @@ export default function Usuarios({ users, onCreateUser, onLoadUsers, onRegenerat
     }
   }
 
+  const handleUpdateUser = async (event) => {
+    event.preventDefault()
+    const formData = new FormData(event.currentTarget)
+    const payload = {
+      name: String(formData.get('name') || '').trim(),
+      is_active: formData.get('is_active') === 'on',
+    }
+
+    if (editingUser.role === 'ENTREGADOR') {
+      payload.telefone = String(formData.get('telefone') || '').trim()
+    } else {
+      payload.email = String(formData.get('email') || '').trim()
+      const password = String(formData.get('password') || '')
+      if (password) payload.password = password
+    }
+
+    setActionError('')
+    setIsUpdating(true)
+    try {
+      const result = await onUpdateUser(editingUser.id, payload)
+      if (!result.ok) {
+        setActionError(result.message)
+        return
+      }
+      setEditingUser(null)
+    } catch (requestError) {
+      setActionError(requestError.message || 'Não foi possível atualizar o usuário.')
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
+  const handleDeleteUser = async (user) => {
+    if (!window.confirm(`Excluir o usuário "${user.name}"? Essa ação não pode ser desfeita.`)) return
+
+    setActionError('')
+    try {
+      const result = await onDeleteUser(user.id)
+      if (!result.ok) setActionError(result.message)
+    } catch (requestError) {
+      setActionError(requestError.message || 'Não foi possível excluir o usuário.')
+    }
+  }
+
   return (
     <section className="card users-card fade-in" style={{ display: 'grid', gap: 20 }}>
       {pairing && <PairingQrPanel pairing={pairing} onClose={() => setPairing(null)} />}
@@ -99,27 +146,37 @@ export default function Usuarios({ users, onCreateUser, onLoadUsers, onRegenerat
       <div className="users-grid">
         <div>
           <h2>Usuarios cadastrados</h2>
+          {actionError && <p role="alert" style={{ color: 'var(--danger)' }}>{actionError}</p>}
           <div className="users-table">
             <div className="users-row users-head">
               <span>Nome</span>
               <span>Email / Telefone</span>
               <span>Role</span>
               <span>Status</span>
+              <span>Ações</span>
             </div>
             {users.map((user) => (
               <div className="users-row" key={user.id}>
-                <span>{user.name}</span>
-                <span>{user.role === 'ENTREGADOR' ? user.telefone || '-' : user.email}</span>
-                <span className="badge badge-muted">{user.role}</span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span data-label="Nome">{user.name}</span>
+                <span data-label="Email / telefone">{user.role === 'ENTREGADOR' ? user.telefone || '-' : user.email}</span>
+                <span className="badge badge-muted" data-label="Perfil">{user.role}</span>
+                <span data-label="Status" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span className={`badge ${user.isActive ? 'badge-green' : 'badge-red'}`}>
                     {user.isActive ? 'ativo' : 'inativo'}
                   </span>
+                </span>
+                <span className="users-row-actions">
+                  <button className="btn btn-light" type="button" onClick={() => { setActionError(''); setEditingUser(user) }}>
+                    Editar
+                  </button>
                   {user.role === 'ENTREGADOR' && (
                     <button className="btn btn-light" type="button" onClick={() => handleGenerateQr(user)}>
                       {user.pareado ? 'Gerar novo QR' : 'Ver QR'}
                     </button>
                   )}
+                  <button className="btn btn-light" type="button" onClick={() => handleDeleteUser(user)}>
+                    Excluir
+                  </button>
                 </span>
               </div>
             ))}
@@ -181,6 +238,51 @@ export default function Usuarios({ users, onCreateUser, onLoadUsers, onRegenerat
           </form>
         </div>
       </div>
+
+      {editingUser && (
+        <div className="modal-overlay" onClick={() => setEditingUser(null)}>
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="editUserTitle" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div><h2 id="editUserTitle">Editar usuário</h2><p>{editingUser.role}</p></div>
+              <button className="btn btn-light" type="button" onClick={() => setEditingUser(null)}>Fechar</button>
+            </div>
+            <form className="users-form" onSubmit={handleUpdateUser}>
+              <div className="filter-group">
+                <label htmlFor="editUserName">Nome</label>
+                <input id="editUserName" name="name" type="text" defaultValue={editingUser.name} maxLength={150} required />
+              </div>
+              {editingUser.role === 'ENTREGADOR' ? (
+                <div className="filter-group">
+                  <label htmlFor="editUserTelefone">Telefone</label>
+                  <input id="editUserTelefone" name="telefone" type="text" defaultValue={editingUser.telefone || ''} maxLength={20} />
+                </div>
+              ) : (
+                <>
+                  <div className="filter-group">
+                    <label htmlFor="editUserEmail">Email</label>
+                    <input id="editUserEmail" name="email" type="email" defaultValue={editingUser.email} maxLength={150} required />
+                  </div>
+                  <div className="filter-group">
+                    <label htmlFor="editUserPassword">Nova senha</label>
+                    <input id="editUserPassword" name="password" type="password" minLength={8} autoComplete="new-password" />
+                    <small>Deixe em branco para manter a senha atual.</small>
+                  </div>
+                </>
+              )}
+              <label className="users-toggle">
+                <input name="is_active" type="checkbox" defaultChecked={editingUser.isActive} />
+                <span>Usuário ativo</span>
+              </label>
+              {actionError && <p role="alert" style={{ color: 'var(--danger)' }}>{actionError}</p>}
+              <div className="users-actions">
+                <button className="btn btn-primary" type="submit" disabled={isUpdating}>
+                  {isUpdating ? 'Salvando...' : 'Salvar alterações'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

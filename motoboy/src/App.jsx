@@ -1,16 +1,22 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import Pareamento from './pages/Pareamento.jsx'
 import Scanner from './pages/Scanner.jsx'
-import Rota from './pages/Rota.jsx'
+import Pedidos from './pages/Pedidos.jsx'
 import Historico from './pages/Historico.jsx'
+import Mapa from './pages/Mapa.jsx'
 import Clock from './components/Clock.jsx'
-import { IconRota, IconScan, IconHistorico, IconLogout } from './components/icons.jsx'
+import { IconPedidos, IconScan, IconMapa, IconHistorico, IconLogout } from './components/icons.jsx'
+import { buildRouteUrl, normalizeStops } from './lib/stops.js'
+import { MAPS_KEY } from './utils/googleMaps.js'
 import { api, ApiError, clearToken, getToken, setToken } from './api.js'
 
+// "mapa" abre o mapa embutido (Google Maps) quando VITE_GOOGLE_MAPS_API_KEY esta configurada;
+// sem a chave, cai no comportamento antigo: abre a rota completa no app de mapas do celular (ver handleNav).
 const NAV_ITEMS = [
-  { view: 'rota', label: 'Rota', Icon: IconRota },
+  { view: 'rota', label: 'Pedidos', Icon: IconPedidos },
   { view: 'scanner', label: 'Bipar', Icon: IconScan },
-  { view: 'historico', label: 'Historico', Icon: IconHistorico },
+  { view: 'mapa', label: 'Mapa', Icon: IconMapa },
+  { view: 'historico', label: 'Histórico', Icon: IconHistorico },
 ]
 
 const getInitials = (name) => {
@@ -31,6 +37,7 @@ export default function App() {
   const [scanError, setScanError] = useState('')
   const [actingEntregaId, setActingEntregaId] = useState(null)
   const [toast, setToast] = useState('')
+  const [detalheAberto, setDetalheAberto] = useState(false)
   const [theme, setTheme] = useState(() => window.localStorage.getItem('theme') || 'light')
 
   useEffect(() => {
@@ -167,6 +174,23 @@ export default function App() {
     entregas: [],
   })), [])
 
+  const handleNav = useCallback(
+    (destino) => {
+      if (destino !== 'mapa' || MAPS_KEY) {
+        setView(destino)
+        return
+      }
+
+      const url = buildRouteUrl(normalizeStops(rota))
+      if (!url) {
+        setToast('Nenhuma parada pendente pra abrir no mapa.')
+        return
+      }
+      window.open(url, '_blank', 'noopener')
+    },
+    [rota],
+  )
+
   useEffect(() => {
     if (!toast) return undefined
     const timer = setTimeout(() => setToast(''), 3000)
@@ -183,15 +207,19 @@ export default function App() {
 
   const saudacao = userName ? `Ola, ${userName.split(' ')[0]}` : ''
   const titles = {
-    rota: ['Rota ativa', rota ? `${rota.status === 'EM_ANDAMENTO' ? 'Em andamento' : rota.status}` : saudacao || 'Nenhuma parada agora'],
+    rota: ['Pedidos', saudacao || 'Suas entregas de hoje'],
     scanner: ['Bipar comanda', 'Aponte pro QR ou digite o codigo'],
+    mapa: ['Mapa', rota ? 'Rota das suas entregas' : saudacao || 'Sem entregas agora'],
     historico: ['Historico', 'Suas entregas concluidas'],
   }
   const [title, subtitle] = titles[view] || titles.rota
 
+  const emDetalhe = view === 'rota' && detalheAberto
+
   return (
-    <div className="mobile-shell">
-      <Clock />
+    <div className={`mobile-shell ${emDetalhe ? 'no-nav' : ''}`}>
+      {!emDetalhe && <Clock />}
+      {!emDetalhe && (
       <header className="mobile-header">
         <div className="mobile-header-user">
           <span className="mobile-avatar">{getInitials(userName)}</span>
@@ -215,6 +243,7 @@ export default function App() {
           </button>
         </div>
       </header>
+      )}
 
       {toast && (
         <div className="notice notice-success" role="status">
@@ -223,27 +252,32 @@ export default function App() {
       )}
 
       {view === 'rota' && (
-        <Rota
+        <Pedidos
           rota={rota}
           loading={rotaLoading}
           actingEntregaId={actingEntregaId}
+          fetchHistorico={fetchHistorico}
           onIniciar={handleIniciar}
           onConcluir={handleConcluir}
           onReordenar={handleReordenar}
+          onDetalheChange={setDetalheAberto}
         />
       )}
 
       {view === 'scanner' && <Scanner onDetect={handleDetect} busy={scanBusy} error={scanError} />}
 
+      {view === 'mapa' && <Mapa rota={rota} loading={rotaLoading} />}
+
       {view === 'historico' && <Historico fetchHistorico={fetchHistorico} />}
 
+      {!emDetalhe && (
       <nav className="bottom-nav">
         {NAV_ITEMS.map((item) => (
           <button
             key={item.view}
             type="button"
             className={`bottom-nav-item ${view === item.view ? 'active' : ''}`}
-            onClick={() => setView(item.view)}
+            onClick={() => handleNav(item.view)}
           >
             <span className="bottom-nav-icon">
               <item.Icon />
@@ -252,6 +286,7 @@ export default function App() {
           </button>
         ))}
       </nav>
+      )}
     </div>
   )
 }

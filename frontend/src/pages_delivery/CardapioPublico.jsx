@@ -220,22 +220,6 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
     return () => clearInterval(timer)
   }, [carregarCardapio])
 
-  const buscarNomePeloTelefone = useCallback(async (telefone) => {
-    const digits = telefone.replace(/\D/g, '')
-    if (digits.length < 10) return
-
-    try {
-      const response = await fetch(`${API_BASE}/pedir/cliente/${digits}`, { headers: { Accept: 'application/json' } })
-      if (!response.ok) return
-      const payload = await response.json()
-      if (payload.nome) {
-        setDados((prev) => ({ ...prev, nome: payload.nome }))
-      }
-    } catch {
-      // sem sorte, sem problema: cliente so digita o nome normalmente
-    }
-  }, [])
-
   const consultarStatus = useCallback(async (codigoQr, incluirDadosPix = true) => {
     try {
       const incluirPix = incluirDadosPix ? '1' : '0'
@@ -351,7 +335,6 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
   const { quote: cotacaoCupom, error: erroCupom, loading: validandoCupom } = usePromotionQuote({
     code: cupomAplicado,
     items: itensParaCotacao,
-    phone: dados.telefone,
     enabled: itensParaCotacao.length > 0,
   })
   const itensCarrinhoCotados = useMemo(
@@ -985,7 +968,6 @@ export default function CardapioPublico({ theme, onToggleTheme }) {
               placeholder="Telefone"
               value={dados.telefone}
               onChange={(event) => setDados({ ...dados, telefone: event.target.value })}
-              onBlur={(event) => buscarNomePeloTelefone(event.target.value)}
               required
             />
             <select value={tipoEntrega} onChange={(event) => setTipoEntrega(event.target.value)}>

@@ -22,7 +22,7 @@ class HistoricoController extends Controller
 
         $query = $entregador->entregas()
             ->where('status_entrega', 'ENTREGUE')
-            ->with('pedido.pagamento')
+            ->with(['pedido.pagamento', 'pedido.cliente.usuario'])
             ->orderByDesc('horario_chegada');
 
         if ($periodo === 'dia') {
@@ -41,6 +41,10 @@ class HistoricoController extends Controller
                 'nr_pedido_delivery' => $e->pedido->nr_pedido_delivery,
                 'concluida_em' => $e->horario_chegada,
                 'taxa' => $e->pedido->vl_taxa_entrega,
+                'endereco' => $e->pedido->ds_observacao,
+                'cliente_nome' => $e->pedido->cliente?->usuario?->nm_usuario,
+                'valor_total' => $e->pedido->pagamento?->vl_final,
+                'pago' => $e->pedido->pagamento?->status === 'APROVADO',
                 'forma_pagamento' => $e->pedido->pagamento?->forma,
             ]),
         ]);

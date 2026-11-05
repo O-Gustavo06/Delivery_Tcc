@@ -2143,6 +2143,18 @@ body::after {
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
 }
 
+.camera-help-link {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.camera-help-link a {
+  color: inherit;
+  font-weight: 700;
+}
+
 .manual-scan {
   display: flex;
   gap: 8px;
@@ -2293,4 +2305,137 @@ body::after {
     padding-left: 12px;
     padding-right: 12px;
   }
+}
+
+/* ---------- Aba Mapa ---------- */
+.mapa-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mapa-page > .notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.mapa-box {
+  position: relative;
+  height: 52vh;
+  height: 52dvh;
+  min-height: 300px;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+  box-shadow: var(--shadow-soft);
+}
+
+.mapa-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.mapa-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--muted);
+  background: var(--panel-soft);
+}
+
+.mapa-overlay strong {
+  color: var(--text);
+}
+
+.mapa-overlay code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--line);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.mapa-fab {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--info);
+  font-size: 22px;
+  line-height: 1;
+  box-shadow: var(--shadow-soft);
+  cursor: pointer;
+}
+
+.mapa-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-soft);
+}
+
+.mapa-card-empty {
+  align-items: center;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mapa-card-empty strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.mapa-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mapa-summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mapa-summary > div:last-child {
+  text-align: right;
+}
+
+.mapa-muted {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mapa-next {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+}
+
+.mapa-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mapa-actions .btn {
+  flex: 1;
+  text-align: center;
 }

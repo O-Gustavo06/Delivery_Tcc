@@ -168,6 +168,119 @@ class AdminEstoqueTest extends TestCase
         $this->assertEquals(5, (float) $ingrediente->fresh()->qtd_atual);
     }
 
+    public function test_previsao_calcula_consumo_real_e_ignora_pedido_cancelado(): void
+    {
+        $empresa = $this->criarEmpresa();
+        $categoria = $this->criarCategoria($empresa);
+        $produto = $this->criarProduto($empresa, $categoria, ['nm_produto' => 'Produto Previsao']);
+        $ingrediente = $this->criarIngrediente($empresa, ['qtd_atual' => 100]);
+        $this->criarReceita($produto, $ingrediente, ['qtde' => 2]);
+
+        foreach ([20, 15, 10] as $diasAtras) {
+            DB::table('estoque_movimento')->insert([
+                'id_ingrediente' => $ingrediente->id_ingrediente,
+                'tipo' => 'SAIDA',
+                'qtde' => 5,
+                'ds_motivo' => 'Consumo de teste',
+                'dt_movimento' => now()->subDays($diasAtras)->toDateTimeString(),
+            ]);
+        }
+
+        $pedido = $this->postJson('/api/admin/orders', [
+            'type' => 'balcao',
+            'customer_name' => 'Cliente Pedido Cancelado',
+            'items' => [['name' => 'Produto Previsao', 'qty' => 1, 'price' => 20]],
+        ], $this->headers())->assertStatus(201)->json('id');
+
+        $this->patchJson("/api/admin/orders/{$pedido}/status", [
+            'status' => 'enviado_cozinha',
+        ], $this->headers())->assertStatus(200);
+        $this->patchJson("/api/admin/orders/{$pedido}/status", [
+            'status' => 'cancelado',
+        ], $this->headers())->assertStatus(200);
+
+        $response = $this->getJson('/api/admin/estoque/previsao?dias=30&prazo_compra=7', $this->headers());
+
+        $response->assertOk()
+            ->assertJsonPath('data.0.dadosSuficientes', true)
+            ->assertJsonPath('data.0.consumoPeriodo', 15)
+            ->assertJsonPath('data.0.mediaDiaria', 0.5)
+            ->assertJsonPath('data.0.mediaMensal', 15)
+            ->assertJsonPath('data.0.diasAteEsgotar', 200)
+            ->assertJsonPath('data.0.status', 'ESTAVEL');
+    }
+
+    public function test_previsao_sinaliza_ruptura_e_recomenda_compra_antecipada(): void
+    {
+        $empresa = $this->criarEmpresa();
+        $ingrediente = $this->criarIngrediente($empresa, ['qtd_atual' => 1]);
+
+        foreach ([20, 15, 10] as $diasAtras) {
+            DB::table('estoque_movimento')->insert([
+                'id_ingrediente' => $ingrediente->id_ingrediente,
+                'tipo' => 'SAIDA',
+                'qtde' => 5,
+                'ds_motivo' => 'Consumo de teste',
+                'dt_movimento' => now()->subDays($diasAtras)->toDateTimeString(),
+            ]);
+        }
+
+        $response = $this->getJson('/api/admin/estoque/previsao?dias=30&prazo_compra=7', $this->headers());
+
+        $response->assertOk()
+            ->assertJsonPath('data.0.dadosSuficientes', true)
+            ->assertJsonPath('data.0.diasAteEsgotar', 2)
+            ->assertJsonPath('data.0.dataPrevistaRuptura', now()->startOfDay()->addDays(2)->toDateString())
+            ->assertJsonPath('data.0.dataCompraRecomendada', now()->startOfDay()->toDateString())
+            ->assertJsonPath('data.0.status', 'RISCO_RUPTURA');
+    }
+
+    public function test_previsao_nao_estima_sem_historico_suficiente(): void
+    {
+        $empresa = $this->criarEmpresa();
+        $ingrediente = $this->criarIngrediente($empresa, ['qtd_atual' => 20]);
+
+        DB::table('estoque_movimento')->insert([
+            'id_ingrediente' => $ingrediente->id_ingrediente,
+            'tipo' => 'SAIDA',
+            'qtde' => 2,
+            'ds_motivo' => 'Consumo isolado',
+            'dt_movimento' => now()->subDays(2)->toDateTimeString(),
+        ]);
+
+        $response = $this->getJson('/api/admin/estoque/previsao', $this->headers());
+
+        $response->assertOk()
+            ->assertJsonPath('data.0.dadosSuficientes', false)
+            ->assertJsonPath('data.0.mediaDiaria', null)
+            ->assertJsonPath('data.0.mediaMensal', null)
+            ->assertJsonPath('data.0.diasAteEsgotar', null)
+            ->assertJsonPath('data.0.status', 'DADOS_INSUFICIENTES');
+    }
+
+    public function test_previsao_nao_usa_historico_antigo_sem_consumo_recente(): void
+    {
+        $empresa = $this->criarEmpresa();
+        $ingrediente = $this->criarIngrediente($empresa, ['qtd_atual' => 20]);
+
+        foreach ([85, 78, 71] as $diasAtras) {
+            DB::table('estoque_movimento')->insert([
+                'id_ingrediente' => $ingrediente->id_ingrediente,
+                'tipo' => 'SAIDA',
+                'qtde' => 2,
+                'ds_motivo' => 'Consumo antigo',
+                'dt_movimento' => now()->subDays($diasAtras)->toDateTimeString(),
+            ]);
+        }
+
+        $response = $this->getJson('/api/admin/estoque/previsao?dias=90', $this->headers());
+
+        $response->assertOk()
+            ->assertJsonPath('data.0.dadosSuficientes', false)
+            ->assertJsonPath('data.0.mediaDiaria', null)
+            ->assertJsonPath('data.0.diasDesdeUltimoConsumo', 71);
+    }
+
     public function test_resumo_financeiro_calcula_lucro_corretamente(): void
     {
         $empresa = $this->criarEmpresa();

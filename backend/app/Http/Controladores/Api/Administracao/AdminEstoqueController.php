@@ -8,8 +8,10 @@ use App\Models\CompraItem;
 use App\Models\EstoqueMovimento;
 use App\Models\Ingrediente;
 use App\Models\Pagamento;
+use App\Models\Pedido;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class AdminEstoqueController extends Controller
@@ -61,7 +63,7 @@ class AdminEstoqueController extends Controller
     {
         $ingrediente = Ingrediente::where('id_empresa', $this->empresaId())->find((int) $id);
 
-        if (!$ingrediente) {
+        if (! $ingrediente) {
             return response()->json(['message' => 'Ingrediente nao encontrado.'], 404);
         }
 
@@ -120,6 +122,134 @@ class AdminEstoqueController extends Controller
         ], 201);
     }
 
+    public function previsaoEstoque(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'dias' => ['sometimes', 'integer', 'in:30,60,90'],
+            'prazo_compra' => ['sometimes', 'integer', 'min:0', 'max:60'],
+        ]);
+
+        $periodoDias = (int) ($data['dias'] ?? 30);
+        $prazoCompraDias = (int) ($data['prazo_compra'] ?? 7);
+        $ingredientes = Ingrediente::where('id_empresa', $this->empresaId())
+            ->orderBy('nm_ingrediente')
+            ->get();
+
+        $movimentos = EstoqueMovimento::query()
+            ->whereIn('id_ingrediente', $ingredientes->pluck('id_ingrediente'))
+            ->where('tipo', 'SAIDA')
+            ->where('dt_movimento', '>=', now()->subDays($periodoDias)->startOfDay())
+            ->where('dt_movimento', '<=', now())
+            ->get(['id_ingrediente', 'qtde', 'ds_motivo', 'dt_movimento']);
+
+        $pedidoIds = $movimentos->map(function (EstoqueMovimento $movimento) {
+            if (preg_match('/^Pedido #(\d+)$/', (string) $movimento->ds_motivo, $matches)) {
+                return (int) $matches[1];
+            }
+
+            return null;
+        })->filter()->unique()->values();
+
+        $pedidosCancelados = $pedidoIds->isEmpty()
+            ? []
+            : Pedido::whereIn('id_pedido', $pedidoIds)
+                ->where('status', 'CANCELADO')
+                ->pluck('id_pedido')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
+        $consumoPorIngrediente = [];
+        foreach ($movimentos as $movimento) {
+            if (preg_match('/^Pedido #(\d+)$/', (string) $movimento->ds_motivo, $matches)
+                && in_array((int) $matches[1], $pedidosCancelados, true)) {
+                continue;
+            }
+
+            $dia = $movimento->dt_movimento->format('Y-m-d');
+            $idIngrediente = (int) $movimento->id_ingrediente;
+            $consumoPorIngrediente[$idIngrediente][$dia] =
+                ($consumoPorIngrediente[$idIngrediente][$dia] ?? 0) + (float) $movimento->qtde;
+        }
+
+        $hoje = now()->startOfDay();
+        $previsoes = $ingredientes->map(function (Ingrediente $ingrediente) use (
+            $consumoPorIngrediente,
+            $periodoDias,
+            $prazoCompraDias,
+            $hoje
+        ) {
+            $consumoDiario = $consumoPorIngrediente[$ingrediente->id_ingrediente] ?? [];
+            ksort($consumoDiario);
+
+            $diasComConsumo = count($consumoDiario);
+            $datasConsumo = array_keys($consumoDiario);
+            $intervaloHistoricoDias = $diasComConsumo > 1
+                ? (int) Carbon::parse($datasConsumo[0])
+                    ->diffInDays(Carbon::parse($datasConsumo[$diasComConsumo - 1]))
+                : 0;
+            $diasDesdeUltimoConsumo = $diasComConsumo > 0
+                ? (int) Carbon::parse($datasConsumo[$diasComConsumo - 1])->diffInDays($hoje)
+                : null;
+            $dadosSuficientes = $diasComConsumo >= 3
+                && $intervaloHistoricoDias >= 7
+                && $diasDesdeUltimoConsumo <= 30;
+            $consumoPeriodo = array_sum($consumoDiario);
+            $mediaDiaria = $dadosSuficientes ? $consumoPeriodo / $periodoDias : null;
+            $estoqueAtual = (float) $ingrediente->qtd_atual;
+            $diasAteEsgotar = $estoqueAtual <= 0
+                ? 0
+                : ($mediaDiaria > 0 ? (int) ceil($estoqueAtual / $mediaDiaria) : null);
+
+            if ($estoqueAtual <= 0) {
+                $status = 'ESGOTADO';
+            } elseif ($dadosSuficientes && $diasAteEsgotar <= $prazoCompraDias) {
+                $status = 'RISCO_RUPTURA';
+            } elseif ($estoqueAtual <= self::LIMITE_ESTOQUE_BAIXO) {
+                $status = 'ESTOQUE_BAIXO';
+            } elseif (! $dadosSuficientes) {
+                $status = 'DADOS_INSUFICIENTES';
+            } else {
+                $status = 'ESTAVEL';
+            }
+
+            $dataRuptura = $diasAteEsgotar === null
+                ? null
+                : $hoje->copy()->addDays($diasAteEsgotar)->toDateString();
+            $dataCompra = $diasAteEsgotar === null
+                ? null
+                : $hoje->copy()->addDays(max(0, $diasAteEsgotar - $prazoCompraDias))->toDateString();
+
+            return [
+                'id' => $ingrediente->id_ingrediente,
+                'name' => $ingrediente->nm_ingrediente,
+                'unit' => $ingrediente->unidade,
+                'qtdAtual' => $estoqueAtual,
+                'isLow' => $estoqueAtual <= self::LIMITE_ESTOQUE_BAIXO,
+                'consumoPeriodo' => round($consumoPeriodo, 3),
+                'mediaDiaria' => $mediaDiaria === null ? null : round($mediaDiaria, 6),
+                'mediaMensal' => $mediaDiaria === null ? null : round($mediaDiaria * 30, 3),
+                'diasComConsumo' => $diasComConsumo,
+                'intervaloHistoricoDias' => $intervaloHistoricoDias,
+                'diasDesdeUltimoConsumo' => $diasDesdeUltimoConsumo,
+                'dadosSuficientes' => $dadosSuficientes,
+                'diasAteEsgotar' => $diasAteEsgotar,
+                'dataPrevistaRuptura' => $dataRuptura,
+                'dataCompraRecomendada' => $dataCompra,
+                'status' => $status,
+            ];
+        })->values();
+
+        return response()->json([
+            'periodoDias' => $periodoDias,
+            'prazoCompraDias' => $prazoCompraDias,
+            'estoqueBaixoLimite' => self::LIMITE_ESTOQUE_BAIXO,
+            'minimoDiasComConsumo' => 3,
+            'minimoIntervaloHistoricoDias' => 7,
+            'maximoDiasDesdeUltimoConsumo' => 30,
+            'data' => $previsoes,
+        ]);
+    }
+
     public function listarCompras(Request $request): JsonResponse
     {
         $page = (int) $request->query('page', 1);
@@ -143,7 +273,7 @@ class AdminEstoqueController extends Controller
     {
         $compra = Compra::with('itens.ingrediente')->find((int) $id);
 
-        if (!$compra) {
+        if (! $compra) {
             return response()->json(['message' => 'Compra nao encontrada.'], 404);
         }
 
@@ -196,7 +326,7 @@ class AdminEstoqueController extends Controller
                     'tipo' => 'ENTRADA',
                     'qtde' => $item['qtde'],
                     'custo_unitario' => $item['vl_unitario'],
-                    'ds_motivo' => 'Compra #' . $compra->id_compra,
+                    'ds_motivo' => 'Compra #'.$compra->id_compra,
                 ]);
 
                 Ingrediente::whereKey($item['id_ingrediente'])->increment('qtd_atual', $item['qtde']);
@@ -312,6 +442,6 @@ class AdminEstoqueController extends Controller
 
     private function money(float $value): string
     {
-        return 'R$ ' . number_format($value, 2, ',', '.');
+        return 'R$ '.number_format($value, 2, ',', '.');
     }
 }

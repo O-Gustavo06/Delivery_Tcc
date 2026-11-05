@@ -127,6 +127,12 @@ class AdminUserController extends Controller
             $user->entregador?->update(['telefone' => $data['telefone']]);
         }
 
+        if ((array_key_exists('is_active', $data) && !$data['is_active'])
+            || isset($data['password'])
+            || isset($data['email'])) {
+            $user->tokens()->delete();
+        }
+
         return response()->json($this->toPublic($user->fresh('entregador')));
     }
 

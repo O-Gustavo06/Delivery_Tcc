@@ -69,6 +69,24 @@ class MotoboyFlowTest extends TestCase
         $this->assertDatabaseCount('rota_entrega', 1);
     }
 
+    public function test_entregador_nao_acessa_rota_que_pertence_a_outro(): void
+    {
+        $headers = $this->adminHeaders();
+        $dono = $this->criarEntregador();
+        $outro = $this->criarEntregador();
+        $tokenDono = $dono->usuario->createToken('teste')->plainTextToken;
+        $tokenOutro = $outro->usuario->createToken('teste')->plainTextToken;
+        $pedido = $this->criarPedidoDelivery($headers);
+
+        $this->getJson("/api/motoboy/pedidos/scan/{$pedido['codigo_qr']}", [
+            'Authorization' => "******",
+        ])->assertOk();
+
+        $this->getJson("/api/motoboy/pedidos/scan/{$pedido['codigo_qr']}", [
+            'Authorization' => "******",
+        ])->assertForbidden();
+    }
+
     public function test_concluir_entrega_de_canal_externo_exige_codigo_de_confirmacao_correto(): void
     {
         Queue::fake();
@@ -172,10 +190,52 @@ class MotoboyFlowTest extends TestCase
 
         $this->assertDatabaseHas('pedido', ['id_pedido' => $pedido['id'], 'status' => 'FINALIZADO']);
 
-        // O motoboy concluindo a entrega tambem precisa aprovar o pagamento (mesma regra do
-        // AdminOrderController::updateStatus) - senao o pedido some da lista de "pagamentos
-        // pendentes" mas o pagamento em si nunca conta como receita no financeiro.
+        // O pedido pode ser concluído, mas pagamento online pendente só é aprovado pelo webhook.
+        $this->assertDatabaseHas('pagamento', ['id_pedido' => $pedido['id'], 'status' => 'PENDENTE']);
+    }
+
+    public function test_concluir_entrega_aprova_pagamento_em_dinheiro_recebido(): void
+    {
+        $headers = $this->adminHeaders();
+        $entregador = $this->criarEntregador();
+        $tokenEntregador = $entregador->usuario->createToken('teste')->plainTextToken;
+        $pedido = $this->criarPedidoDelivery($headers, ['payment_method' => 'dinheiro']);
+
+        $this->getJson("/api/motoboy/pedidos/scan/{$pedido['codigo_qr']}", [
+            'Authorization' => "******",
+        ])->assertOk();
+        $entregaId = \App\Models\Entrega::where('id_pedido', $pedido['id'])->value('id_entrega');
+
+        $this->patchJson("/api/motoboy/entregas/{$entregaId}/concluir", [], [
+            'Authorization' => "******",
+        ])->assertOk();
+
         $this->assertDatabaseHas('pagamento', ['id_pedido' => $pedido['id'], 'status' => 'APROVADO']);
+    }
+
+    public function test_historico_do_motoboy_inclui_dados_dos_pedidos_entregues(): void
+    {
+        $headers = $this->adminHeaders();
+        $entregador = $this->criarEntregador();
+        $tokenEntregador = $entregador->usuario->createToken('teste')->plainTextToken;
+        $authHeaders = ['Authorization' => "Bearer {$tokenEntregador}"];
+        $pedido = $this->criarPedidoDelivery($headers, [
+            'customer_name' => 'Cliente Historico Motoboy',
+            'payment_method' => 'dinheiro',
+        ]);
+
+        $this->getJson("/api/motoboy/pedidos/scan/{$pedido['codigo_qr']}", $authHeaders)->assertOk();
+        $entregaId = \App\Models\Entrega::where('id_pedido', $pedido['id'])->value('id_entrega');
+        $this->patchJson("/api/motoboy/entregas/{$entregaId}/concluir", [], $authHeaders)->assertOk();
+
+        $pagamento = \App\Models\Pagamento::where('id_pedido', $pedido['id'])->firstOrFail();
+        $response = $this->getJson('/api/motoboy/entregas/historico?periodo=dia', $authHeaders)
+            ->assertOk()
+            ->assertJsonPath('entregas.0.endereco', 'Rua Teste, 1')
+            ->assertJsonPath('entregas.0.cliente_nome', 'Cliente Historico Motoboy')
+            ->assertJsonPath('entregas.0.pago', true);
+
+        $this->assertEquals((float) $pagamento->vl_final, (float) $response->json('entregas.0.valor_total'));
     }
 
     public function test_outro_entregador_nao_consegue_mexer_em_entrega_que_nao_e_dele(): void

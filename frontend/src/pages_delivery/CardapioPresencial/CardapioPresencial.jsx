@@ -35,8 +35,7 @@ const FORMAS_PAGAMENTO = [
 
 const formatarPreco = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
-// Nome (e, na mesa, o id_cliente devolvido pelo backend) fica lembrado no aparelho pra quem
-// pede mais de um prato não precisar digitar de novo.
+// Dados da visita ficam lembrados no aparelho para pedidos seguintes da mesma mesa.
 const chaveCliente = (token) => (token ? `presencial_cliente_${token}` : 'presencial_cliente')
 
 function lerJson(chave) {
@@ -185,8 +184,6 @@ function FormPedido({ produto, token, promocoes, voltar, aoEnviar }) {
   const { quote: cotacaoCupom, error: erroCupom, loading: validandoCupom } = usePromotionQuote({
     code: cupomAplicado,
     items: itensParaCotacao,
-    phone: telefone,
-    clientId: token && salvo.nome === nome.trim() ? salvo.idCliente : null,
   })
   const precoComPromocao = aplicarPromocoes([produto], promocoes, { [produto.id]: qtd })[0]
   const totalEstimado = cotacaoCupom?.subtotal ?? precoComPromocao.preco * qtd
@@ -206,26 +203,40 @@ function FormPedido({ produto, token, promocoes, voltar, aoEnviar }) {
     setEnviando(true)
     setErro('')
 
-    const notaLimpa = nota.trim() || null
-    const url = token ? `${API_BASE}/mesa/${token}/pedidos` : `${API_BASE}/presencial/pedidos`
-    const corpo = token
-      ? {
-          // Reaproveita o cliente identificado pelo telefone e, quando disponível, pelo id salvo.
-          ...(salvo.idCliente && salvo.nome === nomeLimpo ? { id_cliente: salvo.idCliente } : { nome: nomeLimpo }),
-          telefone: telefone.trim(),
-          coupon_code: cupomAplicado || undefined,
-          items: [{ id_produto: produto.id, qty: qtd, note: notaLimpa }],
-        }
-      : {
-          nome: nomeLimpo,
-          telefone: telefone.trim(),
-          payment_method: pagamento,
-          note: notaLimpa,
-          coupon_code: cupomAplicado || undefined,
-          items: [{ id_produto: produto.id, qty: qtd }],
-        }
-
     try {
+      const notaLimpa = nota.trim() || null
+      const url = token ? `${API_BASE}/mesa/${token}/pedidos` : `${API_BASE}/presencial/pedidos`
+      let sessaoMesa = salvo.sessionToken
+
+      if (token && (!sessaoMesa || salvo.nome !== nomeLimpo)) {
+        const identificacao = await fetch(`${API_BASE}/mesa/${token}/identificar`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ nome: nomeLimpo }),
+        })
+        const dadosIdentificacao = await identificacao.json().catch(() => ({}))
+        if (!identificacao.ok) {
+          setErro(dadosIdentificacao.message || 'Não foi possível iniciar sua sessão na mesa.')
+          return
+        }
+        sessaoMesa = dadosIdentificacao.session_token
+      }
+
+      const corpo = token
+        ? {
+            session_token: sessaoMesa,
+            coupon_code: cupomAplicado || undefined,
+            items: [{ id_produto: produto.id, qty: qtd, note: notaLimpa }],
+          }
+        : {
+            nome: nomeLimpo,
+            telefone: telefone.trim(),
+            payment_method: pagamento,
+            note: notaLimpa,
+            coupon_code: cupomAplicado || undefined,
+            items: [{ id_produto: produto.id, qty: qtd }],
+          }
+
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -233,15 +244,16 @@ function FormPedido({ produto, token, promocoes, voltar, aoEnviar }) {
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
+        if (response.status === 401 && token) {
+          window.localStorage.removeItem(chaveCliente(token))
+        }
         const validationError = Object.values(data.errors || {}).flat()[0]
         setErro(validationError || data.message || 'Não foi possível enviar o pedido. Tente de novo.')
         return
       }
-      salvarJson(chaveCliente(token), {
-        nome: nomeLimpo,
-        telefone: telefone.trim() || salvo.telefone,
-        idCliente: data.id_cliente ?? salvo.idCliente,
-      })
+      salvarJson(chaveCliente(token), token
+        ? { nome: nomeLimpo, sessionToken: sessaoMesa }
+        : { nome: nomeLimpo, telefone: telefone.trim() || salvo.telefone })
       aoEnviar({
         numero: token ? data.id_pedido : data.number,
         total: data.pedido_total ?? data.total ?? totalEstimado,
@@ -277,10 +289,12 @@ function FormPedido({ produto, token, promocoes, voltar, aoEnviar }) {
           <input value={nome} onChange={(e) => setNome(e.target.value)} maxLength={150} autoComplete="name" required />
         </label>
 
-        <label className="cp-campo">
-          <span>Seu telefone *</span>
-          <input type="tel" inputMode="tel" value={telefone} onChange={(e) => setTelefone(e.target.value)} maxLength={20} autoComplete="tel" required />
-        </label>
+        {!token && (
+          <label className="cp-campo">
+            <span>Seu telefone *</span>
+            <input type="tel" inputMode="tel" value={telefone} onChange={(e) => setTelefone(e.target.value)} maxLength={20} autoComplete="tel" required />
+          </label>
+        )}
 
         <label className="cp-campo">
           <span>Cupom de desconto (opcional)</span>

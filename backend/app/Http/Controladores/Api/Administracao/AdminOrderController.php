@@ -376,11 +376,13 @@ class AdminOrderController extends Controller
             ]);
         }
 
-        // Delivery/balcao nao tem uma etapa separada de "fechar a comanda e confirmar
-        // pagamento" (isso so existe pra mesa, via ComandaController::confirmarPagamento) -
-        // "entregue" JA E o momento em que o dinheiro/pix/cartao foi recebido, entao e aqui
-        // que o pagamento vira APROVADO e passa a contar como receita no financeiro.
-        if ($dbStatus === 'FINALIZADO' && $order->tipo_pedido !== 'MESA' && $order->pagamento) {
+        // A conclusao administrativa confirma pagamentos locais. Transacoes do Asaas
+        // permanecem sob autoridade exclusiva do webhook autenticado do gateway.
+        if ($dbStatus === 'FINALIZADO'
+            && $order->tipo_pedido !== 'MESA'
+            && $order->pagamento
+            && $order->pagamento->status === 'PENDENTE'
+            && !$order->pagamento->transacoes()->where('provedor', 'ASAAS')->exists()) {
             $order->pagamento->update(['status' => 'APROVADO']);
         }
 
@@ -487,7 +489,7 @@ class AdminOrderController extends Controller
             'channel' => self::DB_TO_FRONT_CHANNEL[$order->canal_origem] ?? 'loja',
             'table_number' => $order->mesa?->nr_mesa,
             'customer_name' => $order->cliente?->usuario?->nm_usuario ?? 'Cliente',
-            'customer_phone' => $order->cliente?->telefone,
+            'customer_phone' => $order->telefone_contato ?? $order->cliente?->telefone,
             'address' => $order->tipo_pedido === 'DELIVERY' ? $order->ds_observacao : null,
             'note' => $order->ds_nota_pedido,
             'status' => self::DB_TO_FRONT_STATUS[$order->status] ?? 'novo',

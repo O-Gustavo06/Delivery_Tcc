@@ -61,11 +61,13 @@ class EntregaController extends Controller
 
             $entrega->pedido?->update(['status' => 'FINALIZADO', 'dt_conclusao' => now()]);
 
-            // Mesma regra do AdminOrderController::updateStatus() - pedido finalizado vira
-            // pagamento aprovado, senao nunca contaria como receita no financeiro. Faltava
-            // aqui porque o motoboy conclui a entrega direto, sem passar por aquele metodo.
-            if ($entrega->pedido?->pagamento?->status === 'PENDENTE') {
-                $entrega->pedido->pagamento->update(['status' => 'APROVADO']);
+            // Só dinheiro recebido na entrega pode ser confirmado pelo motoboy.
+            // PIX/cartão online dependem da confirmação autenticada do Asaas.
+            $pagamento = $entrega->pedido?->pagamento;
+            if ($pagamento?->status === 'PENDENTE'
+                && $pagamento->forma === 'DINHEIRO'
+                && !$pagamento->transacoes()->where('provedor', 'ASAAS')->exists()) {
+                $pagamento->update(['status' => 'APROVADO']);
             }
 
             if ($entrega->pedido?->canal_origem === 'ONLINE') {

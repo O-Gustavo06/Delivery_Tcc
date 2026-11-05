@@ -124,7 +124,7 @@ function AuditoriaModal({ audit, cliente, carregando, erro, onClose }) {
   )
 }
 
-export default function Clientes({ customersData, onFetchCustomers, onFetchCustomerAudit }) {
+export default function Clientes({ customersData, onFetchCustomers, onFetchCustomerAudit, onUpdateCustomer, onDeleteCustomer }) {
   const [segmentoAberto, setSegmentoAberto] = useState(null)
   const [busca, setBusca] = useState('')
   const [pagina, setPagina] = useState(1)
@@ -135,6 +135,9 @@ export default function Clientes({ customersData, onFetchCustomers, onFetchCusto
   const [auditoria, setAuditoria] = useState(null)
   const [carregandoAuditoria, setCarregandoAuditoria] = useState(false)
   const [erroAuditoria, setErroAuditoria] = useState('')
+  const [clienteEditando, setClienteEditando] = useState(null)
+  const [erroAcaoCliente, setErroAcaoCliente] = useState('')
+  const [salvandoCliente, setSalvandoCliente] = useState(false)
 
   useEffect(() => {
     let ativo = true
@@ -189,6 +192,60 @@ export default function Clientes({ customersData, onFetchCustomers, onFetchCusto
     setAuditoria(null)
   }
 
+  const salvarCliente = async (event) => {
+    event.preventDefault()
+    const formData = new FormData(event.currentTarget)
+    const payload = {
+      nome: String(formData.get('nome') || '').trim(),
+      telefone: String(formData.get('telefone') || '').trim() || null,
+      cpf: String(formData.get('cpf') || '').trim() || null,
+    }
+
+    setErroAcaoCliente('')
+    setSalvandoCliente(true)
+    try {
+      const resultado = await onUpdateCustomer(clienteEditando.id, payload)
+      if (!resultado.ok) {
+        setErroAcaoCliente(resultado.message)
+        return
+      }
+
+      setLista((atual) => atual && ({
+        ...atual,
+        data: atual.data.map((cliente) => cliente.id === resultado.data.id ? { ...cliente, ...resultado.data } : cliente),
+      }))
+      setClienteSelecionado((atual) => atual?.id === resultado.data.id ? { ...atual, ...resultado.data } : atual)
+      setClienteEditando(null)
+    } catch (requestError) {
+      setErroAcaoCliente(requestError.message || 'Não foi possível atualizar o cliente.')
+    } finally {
+      setSalvandoCliente(false)
+    }
+  }
+
+  const excluirCliente = async (cliente) => {
+    if (!window.confirm(`Excluir o cadastro de "${cliente.nome}"? Essa ação não pode ser desfeita.`)) return
+
+    setErroAcaoCliente('')
+    try {
+      const resultado = await onDeleteCustomer(cliente.id)
+      if (!resultado.ok) {
+        setErroAcaoCliente(resultado.message)
+        return
+      }
+
+      setLista((atual) => atual && ({
+        ...atual,
+        total: Math.max(0, atual.total - 1),
+        data: atual.data.filter((item) => item.id !== cliente.id),
+      }))
+      setClienteSelecionado((atual) => atual?.id === cliente.id ? null : atual)
+      if (lista?.data?.length === 1 && pagina > 1) setPagina((atual) => atual - 1)
+    } catch (requestError) {
+      setErroAcaoCliente(requestError.message || 'Não foi possível excluir o cliente.')
+    }
+  }
+
   return (
     <section className="page-grid page-grid-2-1">
       <div className="page-stack">
@@ -208,20 +265,22 @@ export default function Clientes({ customersData, onFetchCustomers, onFetchCusto
             />
           </div>
           {erroLista && <p role="alert" style={{ color: 'var(--danger)' }}>{erroLista}</p>}
+          {erroAcaoCliente && <p role="alert" style={{ color: 'var(--danger)' }}>{erroAcaoCliente}</p>}
           <div className="data-table">
-            <div className="data-row row-head" style={{ gridTemplateColumns: '1fr 0.7fr 0.45fr 0.8fr' }}>
-              <span>Cliente</span><span>Telefone</span><span>Pedidos</span><span>Último pedido</span>
+            <div className="data-row row-head" style={{ gridTemplateColumns: '1fr 0.7fr 0.45fr 0.8fr 1fr' }}>
+              <span>Cliente</span><span>Telefone</span><span>Pedidos</span><span>Último pedido</span><span>Ações</span>
             </div>
             {lista?.data?.map((cliente) => (
-              <button
-                type="button"
-                key={cliente.id}
-                className="data-row"
-                onClick={() => abrirAuditoria(cliente)}
-                style={{ gridTemplateColumns: '1fr 0.7fr 0.45fr 0.8fr', width: '100%', textAlign: 'left', font: 'inherit', cursor: 'pointer' }}
-              >
-                <strong>{cliente.nome}</strong><span>{cliente.telefone || '—'}</span><span>{cliente.pedidos}</span><span>{formatDate(cliente.ultimo_pedido)}</span>
-              </button>
+              <div key={cliente.id} className="data-row" style={{ gridTemplateColumns: '1fr 0.7fr 0.45fr 0.8fr 1fr' }}>
+                <button type="button" className="client-audit-link" onClick={() => abrirAuditoria(cliente)}>{cliente.nome}</button>
+                <span>{cliente.telefone || '—'}</span>
+                <span>{cliente.pedidos}</span>
+                <span>{formatDate(cliente.ultimo_pedido)}</span>
+                <span className="client-actions">
+                  <button className="btn btn-light" type="button" onClick={() => { setErroAcaoCliente(''); setClienteEditando(cliente) }}>Editar</button>
+                  <button className="btn btn-light" type="button" onClick={() => excluirCliente(cliente)}>Excluir</button>
+                </span>
+              </div>
             ))}
           </div>
           {carregandoLista && <p style={{ color: 'var(--muted)' }}>Carregando clientes...</p>}
@@ -285,6 +344,36 @@ export default function Clientes({ customersData, onFetchCustomers, onFetchCusto
           erro={erroAuditoria}
           onClose={fecharAuditoria}
         />
+      )}
+      {clienteEditando && (
+        <div className="modal-overlay" onClick={() => setClienteEditando(null)}>
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="editCustomerTitle" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div><h2 id="editCustomerTitle">Editar cliente</h2><p>Atualize os dados de contato do cadastro.</p></div>
+              <button className="btn btn-light" type="button" onClick={() => setClienteEditando(null)}>Fechar</button>
+            </div>
+            <form className="users-form" onSubmit={salvarCliente}>
+              <div className="filter-group">
+                <label htmlFor="editCustomerName">Nome</label>
+                <input id="editCustomerName" name="nome" type="text" defaultValue={clienteEditando.nome} maxLength={150} required />
+              </div>
+              <div className="filter-group">
+                <label htmlFor="editCustomerPhone">Telefone</label>
+                <input id="editCustomerPhone" name="telefone" type="tel" defaultValue={clienteEditando.telefone || ''} maxLength={20} />
+              </div>
+              <div className="filter-group">
+                <label htmlFor="editCustomerCpf">CPF</label>
+                <input id="editCustomerCpf" name="cpf" type="text" defaultValue={clienteEditando.cpf || ''} maxLength={14} />
+              </div>
+              {erroAcaoCliente && <p role="alert" style={{ color: 'var(--danger)' }}>{erroAcaoCliente}</p>}
+              <div className="users-actions">
+                <button className="btn btn-primary" type="submit" disabled={salvandoCliente}>
+                  {salvandoCliente ? 'Salvando...' : 'Salvar alterações'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </section>
   )

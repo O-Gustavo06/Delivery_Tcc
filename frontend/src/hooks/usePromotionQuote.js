@@ -3,7 +3,7 @@ import { resolveApiBase } from '../utils/apiBase'
 
 const API_BASE = resolveApiBase()
 
-export default function usePromotionQuote({ code, items, phone, clientId, enabled = true }) {
+export default function usePromotionQuote({ code, items, enabled = true }) {
   const itemsKey = useMemo(() => JSON.stringify(items), [items])
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
@@ -30,8 +30,6 @@ export default function usePromotionQuote({ code, items, phone, clientId, enable
           body: JSON.stringify({
             coupon_code: code || undefined,
             items: JSON.parse(itemsKey),
-            ...(phone ? { telefone: phone } : {}),
-            ...(clientId ? { id_cliente: clientId } : {}),
           }),
         })
         const payload = await response.json().catch(() => ({}))
@@ -54,7 +52,7 @@ export default function usePromotionQuote({ code, items, phone, clientId, enable
       clearTimeout(timer)
       controller.abort()
     }
-  }, [code, itemsKey, phone, clientId, enabled])
+  }, [code, itemsKey, enabled])
 
   return { quote: result, error, loading }
 }

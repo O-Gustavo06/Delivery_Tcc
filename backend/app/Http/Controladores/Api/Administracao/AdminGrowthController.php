@@ -7,12 +7,15 @@ use App\Models\Avaliacao;
 use App\Models\Cliente;
 use App\Models\Pedido;
 use App\Models\PosVenda;
+use App\Models\User;
 use App\Models\WhatsappMensagem;
 use App\Services\ClienteIdentityService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class AdminGrowthController extends Controller
 {
@@ -301,12 +304,106 @@ class AdminGrowthController extends Controller
             'id' => $cliente->id_cliente,
             'nome' => $cliente->usuario?->nm_usuario ?? 'Cliente',
             'telefone' => $cliente->telefone,
+            'cpf' => $cliente->cpf,
             'telefone_normalizado' => $cliente->telefone_normalizado,
             'pedidos' => (int) $cliente->pedidos_count,
             'ultimo_pedido' => $cliente->ultimo_pedido,
         ]);
 
         return response()->json($clientes);
+    }
+
+    public function atualizarCliente(Request $request, string $id): JsonResponse
+    {
+        $cliente = app(ClienteIdentityService::class)->resolverPorId((int) $id);
+        if (!$cliente) {
+            return response()->json(['message' => 'Cliente nao encontrado.'], 404);
+        }
+
+        $data = $request->validate([
+            'nome' => ['sometimes', 'required', 'string', 'max:150'],
+            'telefone' => ['sometimes', 'nullable', 'string', 'max:20'],
+            'cpf' => ['sometimes', 'nullable', 'string', 'max:14', Rule::unique('cliente', 'cpf')->ignore($cliente->id_cliente, 'id_cliente')],
+        ]);
+
+        if (array_key_exists('telefone', $data) && trim((string) $data['telefone']) !== '') {
+            $normalizado = ClienteIdentityService::normalizarTelefone($data['telefone']);
+            if (!$normalizado) {
+                throw ValidationException::withMessages([
+                    'telefone' => ['Informe um telefone brasileiro válido com DDD.'],
+                ]);
+            }
+
+            $telefoneEmUso = Cliente::query()
+                ->where('telefone_normalizado', $normalizado)
+                ->where('id_cliente', '!=', $cliente->id_cliente)
+                ->exists();
+            if ($telefoneEmUso) {
+                throw ValidationException::withMessages([
+                    'telefone' => ['Este telefone já está associado a outro cliente.'],
+                ]);
+            }
+        }
+
+        try {
+            DB::transaction(function () use ($cliente, $data) {
+                if (isset($data['nome'])) {
+                    $cliente->usuario?->update(['nm_usuario' => $data['nome']]);
+                }
+                if (array_key_exists('telefone', $data)) {
+                    $cliente->telefone = $data['telefone'];
+                }
+                if (array_key_exists('cpf', $data)) {
+                    $cliente->cpf = $data['cpf'];
+                }
+                if (array_key_exists('telefone', $data) || array_key_exists('cpf', $data)) {
+                    $cliente->save();
+                }
+            });
+        } catch (\Illuminate\Database\QueryException $exception) {
+            if ((int) $exception->getCode() === 23000 || str_contains($exception->getMessage(), '1062')) {
+                return response()->json(['message' => 'Telefone ou CPF já cadastrado para outro cliente.'], 409);
+            }
+
+            throw $exception;
+        }
+
+        return response()->json([
+            'id' => $cliente->id_cliente,
+            'nome' => $cliente->usuario?->fresh()?->nm_usuario ?? 'Cliente',
+            'telefone' => $cliente->telefone,
+            'cpf' => $cliente->cpf,
+        ]);
+    }
+
+    public function excluirCliente(string $id): JsonResponse
+    {
+        $cliente = app(ClienteIdentityService::class)->resolverPorId((int) $id);
+        if (!$cliente) {
+            return response()->json(['message' => 'Cliente nao encontrado.'], 404);
+        }
+
+        $idsCliente = Cliente::query()
+            ->where('id_cliente_principal', $cliente->id_cliente)
+            ->pluck('id_usuario')
+            ->push($cliente->id_usuario)
+            ->filter()
+            ->unique()
+            ->values();
+
+        try {
+            DB::transaction(fn () => User::whereIn('id_usuario', $idsCliente)->delete());
+        } catch (\Illuminate\Database\QueryException $exception) {
+            if ((int) $exception->getCode() === 23000 || str_contains($exception->getMessage(), '1451')) {
+                return response()->json([
+                    'message' => 'Não é possível excluir este cliente porque há pedidos, avaliações ou utilizações de promoções vinculados ao histórico.',
+                ], 409);
+            }
+
+            throw $exception;
+        }
+
+        return response()->json(null, 204);
     }
 
     public function auditoria(string $id): JsonResponse

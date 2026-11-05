@@ -22,6 +22,7 @@ class Pedido extends Model
     protected $fillable = [
         'id_empresa',
         'id_cliente',
+        'telefone_contato',
         'id_mesa',
         'id_comanda',
         'codigo_qr',

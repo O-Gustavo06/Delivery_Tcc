@@ -103,4 +103,33 @@ class AdminUserTest extends TestCase
 
         $this->assertDatabaseMissing('usuario', ['id_usuario' => $usuario->id_usuario]);
     }
+
+    public function test_desativar_usuario_revoga_tokens_existentes(): void
+    {
+        $usuario = $this->criarUsuario('ADMIN');
+        $token = $usuario->createToken('sessao-aberta')->plainTextToken;
+        $tokenId = $usuario->tokens()->firstOrFail()->id;
+
+        $this->patchJson("/api/admin/users/{$usuario->id_usuario}", ['is_active' => false], $this->headers())
+            ->assertOk()
+            ->assertJsonPath('is_active', false);
+
+        $this->getJson('/api/admin/users', ['Authorization' => "Bearer {$token}"])
+            ->assertUnauthorized();
+        $this->assertDatabaseMissing('personal_access_tokens', ['id' => $tokenId]);
+    }
+
+    public function test_token_antigo_expira_mesmo_se_nao_tiver_expires_at(): void
+    {
+        $usuario = $this->criarUsuario('ADMIN');
+        $token = $usuario->createToken('token-antigo');
+        $token->accessToken->forceFill(['created_at' => now()->subMinutes(1441)])->save();
+        $tokenId = $token->accessToken->id;
+
+        $this->getJson('/api/admin/users', [
+            'Authorization' => "Bearer {$token->plainTextToken}",
+        ])->assertUnauthorized();
+
+        $this->assertDatabaseMissing('personal_access_tokens', ['id' => $tokenId]);
+    }
 }

@@ -240,7 +240,7 @@ function RegistrarCompraModal({ ingredientes, onCreate, onCriarIngrediente, onIn
 }
 
 const TIPOS_MOVIMENTO = [
-  { value: 'SAIDA', label: 'Saida (quebra/perda)' },
+  { value: 'SAIDA', label: 'Saída (consumo/perda)' },
   { value: 'AJUSTE', label: 'Ajuste (correcao para menos)' },
   { value: 'ENTRADA', label: 'Entrada (correcao para mais)' },
 ]
@@ -285,7 +285,7 @@ function MovimentoAvulsoModal({ ingredientes, onRegistrar, onClose }) {
         <div className="modal-head">
           <div>
             <h2>Movimento avulso de estoque</h2>
-            <p>Quebra, perda ou correcao manual - nao ligado a compra nem a pedido.</p>
+            <p>Consumo manual, quebra, perda ou correção não ligada a um pedido.</p>
           </div>
           <button className="btn btn-light" type="button" onClick={onClose}>
             Fechar
@@ -425,8 +425,178 @@ function EditarIngredienteModal({ ingrediente, onEditar, onClose }) {
   )
 }
 
+const STATUS_PREVISAO = {
+  ESGOTADO: { label: 'Esgotado', className: 'badge-red' },
+  RISCO_RUPTURA: { label: 'Risco de ruptura', className: 'badge-red' },
+  ESTOQUE_BAIXO: { label: 'Estoque baixo', className: 'badge-sun' },
+  DADOS_INSUFICIENTES: { label: 'Dados insuficientes', className: 'badge-sun' },
+  ESTAVEL: { label: 'Estável', className: 'badge-green' },
+}
+
+const formatQuantidade = (value, fractionDigits = 3) =>
+  Number(value || 0).toLocaleString('pt-BR', { maximumFractionDigits: fractionDigits })
+
+const formatarData = (value) => (value ? value.split('-').reverse().join('/') : '—')
+
+function PrevisaoEstoqueTab({ onFetchPrevisaoEstoque }) {
+  const [periodoDias, setPeriodoDias] = useState(30)
+  const [prazoCompraDias, setPrazoCompraDias] = useState(7)
+  const [versaoAtualizacao, setVersaoAtualizacao] = useState(0)
+  const [previsao, setPrevisao] = useState(null)
+  const [erro, setErro] = useState('')
+  const [carregando, setCarregando] = useState(true)
+
+  useEffect(() => {
+    let ativa = true
+    setCarregando(true)
+    setErro('')
+
+    onFetchPrevisaoEstoque(periodoDias, prazoCompraDias)
+      .then((resultado) => {
+        if (!ativa) return
+        if (!resultado?.ok) {
+          setPrevisao(null)
+          setErro(resultado?.message || 'Não foi possível carregar a previsão de estoque.')
+          return
+        }
+        setPrevisao(resultado.data)
+      })
+      .catch((error) => {
+        if (ativa) setErro(error instanceof Error ? error.message : 'Falha ao carregar a previsão de estoque.')
+      })
+      .finally(() => {
+        if (ativa) setCarregando(false)
+      })
+
+    return () => {
+      ativa = false
+    }
+  }, [onFetchPrevisaoEstoque, periodoDias, prazoCompraDias, versaoAtualizacao])
+
+  const itens = previsao?.data ?? []
+  const emRisco = itens.filter((item) => ['ESGOTADO', 'RISCO_RUPTURA'].includes(item.status)).length
+  const estoqueBaixo = itens.filter((item) => item.isLow && item.status !== 'ESGOTADO').length
+  const semDados = itens.filter((item) => !item.dadosSuficientes).length
+
+  return (
+    <div className="page-stack">
+      <section className="cards">
+        <div className="card metric">
+          <div><span>Itens em risco de ruptura</span><strong>{emRisco}</strong></div>
+          <div className="metric-icon badge-red">RI</div>
+        </div>
+        <div className="card metric">
+          <div><span>Estoque baixo</span><strong>{estoqueBaixo}</strong></div>
+          <div className="metric-icon badge-sun">BX</div>
+        </div>
+        <div className="card metric">
+          <div><span>Sem histórico suficiente</span><strong>{semDados}</strong></div>
+          <div className="metric-icon badge-blue">DA</div>
+        </div>
+      </section>
+
+      <article className="card section-card">
+        <div className="section-head">
+          <div>
+            <h2>Previsão de Estoque</h2>
+            <p>
+              Projeção baseada nas saídas reais; pedidos cancelados e ajustes não são tratados como consumo.
+              São necessários 3 dias de consumo distintos em um intervalo de 7 dias, com consumo nos últimos 30 dias.
+              A média mensal considera 30 dias.
+            </p>
+          </div>
+          <div className="forecast-controls">
+            <label>
+              Histórico
+              <select value={periodoDias} onChange={(event) => setPeriodoDias(Number(event.target.value))}>
+                {[30, 60, 90].map((dias) => <option key={dias} value={dias}>{dias} dias</option>)}
+              </select>
+            </label>
+            <label>
+              Antecedência de compra
+              <select value={prazoCompraDias} onChange={(event) => setPrazoCompraDias(Number(event.target.value))}>
+                {[0, 3, 7, 14, 30].map((dias) => <option key={dias} value={dias}>{dias} dias</option>)}
+              </select>
+            </label>
+            <button
+              className="btn btn-light"
+              type="button"
+              onClick={() => setVersaoAtualizacao((versao) => versao + 1)}
+              disabled={carregando}
+            >
+              Atualizar
+            </button>
+          </div>
+        </div>
+
+        {erro && <div className="login-error" role="alert">{erro}</div>}
+        {carregando ? (
+          <div className="empty" role="status">Calculando previsão...</div>
+        ) : (
+          <div className="data-table">
+            <div
+              className="data-row row-head forecast-grid"
+              style={{ gridTemplateColumns: '1.2fr 0.7fr 0.7fr 0.7fr 0.7fr 0.9fr 1fr 1fr' }}
+            >
+              <span>Ingrediente</span>
+              <span>Estoque atual</span>
+              <span>Média / dia</span>
+              <span>Média / mês</span>
+              <span>Acaba em</span>
+              <span>Ruptura estimada</span>
+              <span>Comprar até</span>
+              <span>Situação</span>
+            </div>
+            {itens.length === 0 && !erro && (
+              <p className="empty">Nenhum ingrediente cadastrado para prever.</p>
+            )}
+            {itens.map((item) => {
+              const status = STATUS_PREVISAO[item.status] ?? STATUS_PREVISAO.DADOS_INSUFICIENTES
+              return (
+                <div
+                  className="data-row forecast-grid"
+                  key={item.id}
+                  style={{
+                    gridTemplateColumns: '1.2fr 0.7fr 0.7fr 0.7fr 0.7fr 0.9fr 1fr 1fr',
+                    borderLeft: item.status === 'RISCO_RUPTURA' || item.status === 'ESGOTADO'
+                      ? '4px solid var(--danger)'
+                      : item.isLow
+                        ? '4px solid var(--warning)'
+                        : undefined,
+                  }}
+                >
+                  <strong data-label="Ingrediente">{item.name}</strong>
+                  <span data-label="Estoque atual">{formatQuantidade(item.qtdAtual)} {item.unit}</span>
+                  <span data-label="Média / dia">{item.mediaDiaria === null ? '—' : `${formatQuantidade(item.mediaDiaria, 4)} ${item.unit}`}</span>
+                  <span data-label="Média / mês">{item.mediaMensal === null ? '—' : `${formatQuantidade(item.mediaMensal)} ${item.unit}`}</span>
+                  <span data-label="Acaba em">{item.diasAteEsgotar === null ? '—' : `${item.diasAteEsgotar} dia(s)`}</span>
+                  <span data-label="Ruptura estimada">{formatarData(item.dataPrevistaRuptura)}</span>
+                  <span data-label="Comprar até">{item.dataCompraRecomendada ? formatarData(item.dataCompraRecomendada) : '—'}</span>
+                  <span data-label="Situação" className={`badge ${status.className}`}>
+                    {item.isLow && !item.dadosSuficientes && item.status !== 'ESGOTADO'
+                      ? 'Baixo · sem previsão'
+                      : status.label}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {previsao && (
+          <p className="forecast-footnote">
+            Média calculada sobre os últimos {previsao.periodoDias} dias. A recomendação de compra considera
+            {` ${previsao.prazoCompraDias} dia(s) `}de antecedência; sem histórico suficiente, a previsão é omitida.
+          </p>
+        )}
+      </article>
+    </div>
+  )
+}
+
 export default function Compras({
+  initialTab = 'compras',
   onFetchIngredientes,
+  onFetchPrevisaoEstoque,
   onFetchCompras,
   onFetchResumoFinanceiro,
   onRegistrarCompra,
@@ -434,6 +604,7 @@ export default function Compras({
   onEditarIngrediente,
   onRegistrarMovimentoAvulso,
 }) {
+  const [aba, setAba] = useState(initialTab)
   const [ingredientes, setIngredientes] = useState([])
   const [compras, setCompras] = useState([])
   const [resumo, setResumo] = useState({ kpis: [], meses: [], topIngredientesComprados: [] })
@@ -489,85 +660,69 @@ export default function Compras({
 
   return (
     <>
-      <section className="cards">
-        {resumo.kpis.map((item, index) => (
-          <div className="card metric fade-in" style={{ '--i': index }} key={item.id}>
-            <div>
-              <span>{item.label}</span>
-              <strong>{item.value}</strong>
-            </div>
-            <div className={`metric-icon badge-${item.tone}`}>{item.label.slice(0, 2).toUpperCase()}</div>
-          </div>
+      <div className="inventory-tabs" role="tablist" aria-label="Seções do armazém">
+        {[
+          { id: 'armazem', label: 'Armazém' },
+          { id: 'previsao', label: 'Previsão de Estoque' },
+          { id: 'compras', label: 'Compras e Lucros' },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            className={`btn ${aba === tab.id ? 'btn-primary' : 'btn-light'}`}
+            type="button"
+            role="tab"
+            aria-selected={aba === tab.id}
+            onClick={() => setAba(tab.id)}
+          >
+            {tab.label}
+          </button>
         ))}
-      </section>
+      </div>
 
-      <section className="page-grid page-grid-2-1">
+      {aba === 'armazem' && (
         <div className="page-stack">
-          <article className="card section-card fade-in" style={{ '--i': 4 }}>
-            <div className="section-head">
-              <div>
-                <h2>Receita, custo e lucro por mes</h2>
-                <p>Receita vem dos pedidos pagos, custo vem das compras registradas.</p>
-              </div>
-              <button className="btn btn-primary" type="button" onClick={() => setIsModalOpen(true)}>
-                Registrar compra
-              </button>
+          <section className="cards">
+            <div className="card metric">
+              <div><span>Itens cadastrados</span><strong>{ingredientes.length}</strong></div>
+              <div className="metric-icon badge-blue">IT</div>
             </div>
-            <MonthlyBarChart
-              data={resumo.meses}
-              series={[
-                { key: 'receita', label: 'Receita', color: 'var(--success)' },
-                { key: 'custoCompras', label: 'Custo de compras', color: 'var(--danger)' },
-                { key: 'lucro', label: 'Lucro', color: 'var(--info)' },
-              ]}
-            />
-          </article>
+            <div className="card metric">
+              <div><span>Estoque baixo</span><strong>{ingredientes.filter((item) => item.isLow).length}</strong></div>
+              <div className="metric-icon badge-sun">BX</div>
+            </div>
+          </section>
 
-          <article className="card section-card fade-in" style={{ '--i': 5 }}>
+          <article className="card section-card">
             <div className="section-head">
               <div>
-                <h2>Historico de compras</h2>
-                <p>Registros mais recentes primeiro.</p>
+                <h2>Estoque atual</h2>
+                <p>Entradas por compras, baixas por pedidos e ajustes ficam registrados no histórico.</p>
+              </div>
+              <div className="inventory-actions">
+                <button className="btn btn-primary" type="button" onClick={() => setIsModalOpen(true)}>
+                  Entrada por compra
+                </button>
+                <button className="btn btn-light" type="button" onClick={() => setIsMovimentoModalOpen(true)}>
+                  Saída / ajuste
+                </button>
               </div>
             </div>
-            <div className="data-table">
-              <div className="data-row row-head" style={{ gridTemplateColumns: '1fr 1.4fr 0.8fr 0.6fr' }}>
-                <span>Data</span>
-                <span>Fornecedor / descricao</span>
-                <span>Itens</span>
-                <span>Total</span>
+            <div className="data-table warehouse-table">
+              <div className="data-row warehouse-row row-head" style={{ gridTemplateColumns: '1.5fr 0.8fr 0.8fr 0.7fr auto' }}>
+                <span>Ingrediente</span>
+                <span>Unidade</span>
+                <span>Quantidade atual</span>
+                <span>Situação</span>
+                <span>Ação</span>
               </div>
-              {compras.length === 0 && (
-                <p style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>Nenhuma compra registrada ainda.</p>
+              {ingredientes.length === 0 && (
+                <p className="empty">Nenhum ingrediente cadastrado. Registre uma compra e cadastre o primeiro item.</p>
               )}
-              {compras.map((compra) => (
-                <div className="data-row" key={compra.id} style={{ gridTemplateColumns: '1fr 1.4fr 0.8fr 0.6fr' }}>
-                  <span>{compra.data ? compra.data.slice(0, 10).split('-').reverse().join('/') : '-'}</span>
-                  <span>{compra.fornecedor || compra.descricao || 'Sem descricao'}</span>
-                  <span>{compra.itens.length} item(ns)</span>
-                  <strong>{formatMoney(compra.total)}</strong>
-                </div>
-              ))}
-            </div>
-          </article>
-        </div>
-
-        <div className="page-stack">
-          <article className="card section-card fade-in" style={{ '--i': 6 }}>
-            <div className="section-head">
-              <div>
-                <h2>Ingredientes em estoque</h2>
-                <p>Saldo atual, atualizado automaticamente nas compras e nas vendas.</p>
-              </div>
-              <button className="btn btn-light" type="button" onClick={() => setIsMovimentoModalOpen(true)}>
-                Movimento avulso
-              </button>
-            </div>
-            <div className="data-table">
               {ingredientes.map((ing) => (
-                <div className="data-row" key={ing.id} style={{ gridTemplateColumns: '1fr 0.6fr 0.5fr auto' }}>
+                <div className="data-row warehouse-row" key={ing.id} style={{ gridTemplateColumns: '1.5fr 0.8fr 0.8fr 0.7fr auto' }}>
                   <strong>{ing.name}</strong>
-                  <span>{ing.qtdAtual} {ing.unit}</span>
+                  <span>{ing.unit}</span>
+                  <span>{formatQuantidade(ing.qtdAtual)} {ing.unit}</span>
                   <span className={`badge ${ing.isLow ? 'badge-red' : 'badge-green'}`}>
                     {ing.isLow ? 'Baixo' : 'OK'}
                   </span>
@@ -578,29 +733,101 @@ export default function Compras({
               ))}
             </div>
           </article>
-
-          <article className="card section-card fade-in" style={{ '--i': 7 }}>
-            <div className="section-head">
-              <div>
-                <h2>Mais comprados</h2>
-                <p>Ultimos meses, por valor gasto.</p>
-              </div>
-            </div>
-            <div className="data-table">
-              {resumo.topIngredientesComprados.length === 0 && (
-                <p style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>Sem compras no periodo.</p>
-              )}
-              {resumo.topIngredientesComprados.map((item) => (
-                <div className="data-row" key={item.nome} style={{ gridTemplateColumns: '1fr 0.5fr 0.6fr' }}>
-                  <strong>{item.nome}</strong>
-                  <span>{item.qtde} {item.unidade}</span>
-                  <span>{item.total}</span>
-                </div>
-              ))}
-            </div>
-          </article>
         </div>
-      </section>
+      )}
+
+      {aba === 'previsao' && <PrevisaoEstoqueTab onFetchPrevisaoEstoque={onFetchPrevisaoEstoque} />}
+
+      {aba === 'compras' && (
+        <>
+          <section className="cards">
+            {resumo.kpis.map((item, index) => (
+              <div className="card metric fade-in" style={{ '--i': index }} key={item.id}>
+                <div>
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                </div>
+                <div className={`metric-icon badge-${item.tone}`}>{item.label.slice(0, 2).toUpperCase()}</div>
+              </div>
+            ))}
+          </section>
+
+          <section className="page-grid page-grid-2-1">
+            <div className="page-stack">
+              <article className="card section-card fade-in" style={{ '--i': 4 }}>
+                <div className="section-head">
+                  <div>
+                    <h2>Receita, custo e lucro por mês</h2>
+                    <p>Receita vem dos pedidos pagos, custo vem das compras registradas.</p>
+                  </div>
+                  <button className="btn btn-primary" type="button" onClick={() => setIsModalOpen(true)}>
+                    Registrar compra
+                  </button>
+                </div>
+                <MonthlyBarChart
+                  data={resumo.meses}
+                  series={[
+                    { key: 'receita', label: 'Receita', color: 'var(--success)' },
+                    { key: 'custoCompras', label: 'Custo de compras', color: 'var(--danger)' },
+                    { key: 'lucro', label: 'Lucro', color: 'var(--info)' },
+                  ]}
+                />
+              </article>
+
+              <article className="card section-card fade-in" style={{ '--i': 5 }}>
+                <div className="section-head">
+                  <div>
+                    <h2>Histórico de compras</h2>
+                    <p>Registros mais recentes primeiro.</p>
+                  </div>
+                </div>
+                <div className="data-table">
+                  <div className="data-row row-head" style={{ gridTemplateColumns: '1fr 1.4fr 0.8fr 0.6fr' }}>
+                    <span>Data</span>
+                    <span>Fornecedor / descrição</span>
+                    <span>Itens</span>
+                    <span>Total</span>
+                  </div>
+                  {compras.length === 0 && (
+                    <p className="empty">Nenhuma compra registrada ainda.</p>
+                  )}
+                  {compras.map((compra) => (
+                    <div className="data-row" key={compra.id} style={{ gridTemplateColumns: '1fr 1.4fr 0.8fr 0.6fr' }}>
+                      <span>{compra.data ? compra.data.slice(0, 10).split('-').reverse().join('/') : '-'}</span>
+                      <span>{compra.fornecedor || compra.descricao || 'Sem descrição'}</span>
+                      <span>{compra.itens.length} item(ns)</span>
+                      <strong>{formatMoney(compra.total)}</strong>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </div>
+
+            <div className="page-stack">
+              <article className="card section-card fade-in" style={{ '--i': 6 }}>
+                <div className="section-head">
+                  <div>
+                    <h2>Mais comprados</h2>
+                    <p>Últimos meses, por valor gasto.</p>
+                  </div>
+                </div>
+                <div className="data-table">
+                  {resumo.topIngredientesComprados.length === 0 && (
+                    <p className="empty">Sem compras no período.</p>
+                  )}
+                  {resumo.topIngredientesComprados.map((item) => (
+                    <div className="data-row" key={item.nome} style={{ gridTemplateColumns: '1fr 0.5fr 0.6fr' }}>
+                      <strong>{item.nome}</strong>
+                      <span>{item.qtde} {item.unidade}</span>
+                      <span>{item.total}</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </div>
+          </section>
+        </>
+      )}
 
       {isModalOpen && (
         <RegistrarCompraModal

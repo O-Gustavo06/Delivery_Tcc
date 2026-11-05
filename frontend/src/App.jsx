@@ -26,11 +26,6 @@ import { resolveApiBase } from './utils/apiBase'
 
 
 const API_BASE = resolveApiBase()
-const DEMO_CREDENTIALS = {
-  email: 'gustavolimadossantos643@gmail.com',
-  password: 'admin123',
-}
-
 const AUTH_BYPASS = false
 
 const statusLabels = {
@@ -66,7 +61,7 @@ const routes = [
   { path: '/entrega', label: 'Entrega', code: 'EN' },
   { path: '/usuarios', label: 'Usuarios', code: 'US' },
   { path: '/financeiro', label: 'Financeiro', code: 'FN' },
-  { path: '/compras', label: 'Compras e Lucros', code: 'CP' },
+  { path: '/armazem', label: 'Armazém', code: 'AZ' },
   { path: '/clientes', label: 'Clientes', code: 'CL' },
   { path: '/crescimento', label: 'Crescimento', code: 'CR' },
   { path: '/pedidos_ifood', label: 'Pedidos iFood', code: 'IF' },
@@ -75,7 +70,7 @@ const routes = [
 
 const navGroups = [
   { label: 'Operação', paths: ['/painel', '/pedidos', '/cardapio', '/cozinha', '/mesas', '/entrega'] },
-  { label: 'Gestão', paths: ['/usuarios', '/compras', '/clientes', '/crescimento', '/promocoes'] },
+  { label: 'Gestão', paths: ['/usuarios', '/armazem', '/clientes', '/crescimento', '/promocoes'] },
   { label: 'Canais', paths: ['/pedidos_ifood', '/whatsapp'] },
 ]
 
@@ -142,12 +137,19 @@ const EMPTY_DASHBOARD_DATA = {
   },
 }
 
+const normalizeRoute = (path) => (path === '/compras' ? '/armazem' : path)
+
 const getInitialRoute = () => {
-  if (window.location.pathname === '/') {
+  const path = normalizeRoute(window.location.pathname)
+  if (path !== window.location.pathname) {
+    window.history.replaceState({}, '', path)
+  }
+
+  if (path === '/') {
     return '/login'
   }
 
-  return window.location.pathname
+  return path
 }
 
 const formatTime = (value) => {
@@ -214,6 +216,7 @@ const mergeDashboardData = (payload = {}) => ({
 
 export default function App() {
   const [route, setRoute] = useState(getInitialRoute)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [orders, setOrders] = useState([])
   const [users, setUsers] = useState([])
   const [dashboardData, setDashboardData] = useState(EMPTY_DASHBOARD_DATA)
@@ -258,9 +261,39 @@ export default function App() {
   }, [])
 
   const navigate = useCallback((path) => {
-    window.history.pushState({}, '', path)
-    setRoute(path)
+    const nextPath = normalizeRoute(path)
+    window.history.pushState({}, '', nextPath)
+    setRoute(nextPath)
   }, [])
+
+  useEffect(() => {
+    setMobileMenuOpen(false)
+  }, [route])
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return undefined
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [mobileMenuOpen])
+
+  const invalidateSession = useCallback(() => {
+    window.localStorage.removeItem('adminToken')
+    setApiToken(null)
+    setApiEnabled(true)
+    setIsAuthenticated(false)
+    setCurrentUser(null)
+    navigate('/login')
+  }, [navigate])
 
   const getAuthToken = useCallback(async () => {
     if (apiToken) return apiToken
@@ -291,6 +324,7 @@ export default function App() {
 
       window.localStorage.setItem('adminToken', payload.token)
       setApiToken(payload.token)
+      setApiEnabled(true)
       setIsAuthenticated(true)
       if (payload.user) setCurrentUser(mapApiUser(payload.user))
 
@@ -324,11 +358,16 @@ export default function App() {
       headers: { Authorization: `Bearer ${token}` },
     })
 
+    if (response.status === 401) {
+      invalidateSession()
+      return
+    }
+
     if (!response.ok) return
 
     const payload = await response.json()
     if (payload) setCurrentUser(mapApiUser(payload))
-  }, [getAuthToken])
+  }, [getAuthToken, invalidateSession])
 
   const fetchOrdersFromApi = useCallback(async () => {
     const token = await getAuthToken()
@@ -369,6 +408,11 @@ export default function App() {
         body: JSON.stringify(orderPayload),
       })
 
+      if (response.status === 401) {
+        invalidateSession()
+        return { ok: false, message: 'Sua sessão expirou. Entre novamente.' }
+      }
+
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => ({}))
         return { ok: false, message: errorPayload.message || 'Falha ao criar pedido.' }
@@ -378,7 +422,7 @@ export default function App() {
       setOrders((prev) => [created, ...prev])
       return { ok: true, message: '' }
     },
-    [getAuthToken],
+    [getAuthToken, invalidateSession],
   )
 
   const fetchComandasPendentes = useCallback(async () => {
@@ -519,6 +563,40 @@ export default function App() {
     fetchAdminInsight(`customers/${encodeURIComponent(id)}/audit`)
   ), [fetchAdminInsight])
 
+  const updateCustomer = useCallback(async (id, payload) => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sua sessão expirou. Entre novamente para editar clientes.' }
+
+    const response = await fetch(`${API_BASE}/admin/customers/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) return { ok: false, message: result.message || 'Não foi possível atualizar o cliente.' }
+    return { ok: true, data: result }
+  }, [getAuthToken])
+
+  const deleteCustomer = useCallback(async (id) => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sua sessão expirou. Entre novamente para excluir clientes.' }
+
+    const response = await fetch(`${API_BASE}/admin/customers/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) return { ok: false, message: result.message || 'Não foi possível excluir o cliente.' }
+    return { ok: true }
+  }, [getAuthToken])
+
   const fetchIngredientes = useCallback(async () => {
     const token = await getAuthToken()
     if (!token) return null
@@ -529,6 +607,25 @@ export default function App() {
     if (!response.ok) return null
 
     return response.json()
+  }, [getAuthToken])
+
+  const fetchPrevisaoEstoque = useCallback(async (dias, prazoCompraDias) => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+    const params = new URLSearchParams({
+      dias: String(dias),
+      prazo_compra: String(prazoCompraDias),
+    })
+    const response = await fetch(`${API_BASE}/admin/estoque/previsao?${params}`, {
+      headers: { Authorization: 'Bearer ' + token },
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      return { ok: false, message: payload.message || 'Falha ao carregar a previsão de estoque.' }
+    }
+
+    return { ok: true, data: payload }
   }, [getAuthToken])
 
   const fetchCompras = useCallback(async () => {
@@ -1312,6 +1409,42 @@ export default function App() {
     [getAuthToken],
   )
 
+  const updateUser = useCallback(async (userId, payload) => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+    const response = await fetch(`${API_BASE}/admin/users/${userId}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) return { ok: false, message: result.message || 'Falha ao atualizar usuário.' }
+
+    const updated = mapApiUser(result)
+    setUsers((prev) => prev.map((user) => (user.id === updated.id ? updated : user)))
+    return { ok: true, user: updated }
+  }, [getAuthToken])
+
+  const deleteUser = useCallback(async (userId) => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+    const response = await fetch(`${API_BASE}/admin/users/${userId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) return { ok: false, message: result.message || 'Falha ao excluir usuário.' }
+
+    setUsers((prev) => prev.filter((user) => user.id !== Number(userId)))
+    return { ok: true }
+  }, [getAuthToken])
+
   const regeneratePairingCode = useCallback(
     async (userId) => {
       const token = await getAuthToken()
@@ -1442,7 +1575,7 @@ export default function App() {
       '/usuarios': 'Gestao de perfis e acessos internos',
       '/financeiro': 'Fluxo de caixa, pagamentos e fechamento diário',
       '/relatorios': 'Indicadores operacionais e financeiros consolidados',
-      '/compras': 'Compras, estoque de ingredientes e lucro mensal',
+      '/armazem': 'Estoque atual, movimentações e previsão de reposição',
       '/clientes': 'Base de clientes, segmentos e campanhas',
       '/crescimento': 'Vendas, finanças, recorrência e satisfação dos clientes',
       '/pedidos_ifood': 'Integracoes com apps, canais externos e cadastro do cardapio online',
@@ -1479,8 +1612,6 @@ export default function App() {
   if (!AUTH_BYPASS && !isAuthenticated) {
     return (
       <Login
-        defaultEmail={DEMO_CREDENTIALS.email}
-        defaultPassword={DEMO_CREDENTIALS.password}
         onLogin={async (email, password) => {
           const result = await loginWithCredentials(email, password)
           if (result.ok) {
@@ -1494,7 +1625,15 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      {mobileMenuOpen && (
+        <button
+          className="mobile-nav-backdrop"
+          type="button"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-label="Fechar menu"
+        />
+      )}
+      <aside className={`sidebar${mobileMenuOpen ? ' sidebar-open' : ''}`} id="main-navigation">
         <div className="brand">
           <div className="brand-icon">
             <img className="brand-logo" src={logo} alt="Logo" />
@@ -1503,6 +1642,14 @@ export default function App() {
             <strong>Restaurante</strong>
             <span>Gestao Completa</span>
           </div>
+          <button
+            className="mobile-menu-close"
+            type="button"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-label="Fechar menu de navegação"
+          >
+            ×
+          </button>
         </div>
         <nav className="nav">
           {navGroups.map((group) => (
@@ -1550,6 +1697,18 @@ export default function App() {
           className={`topbar topbar-flat${route === '/painel' ? ' topbar-dashboard' : route === '/pedidos' ? ' topbar-orders' : ''}`}
         >
           <div className="topbar-left">
+            <button
+              className="mobile-menu-toggle"
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              aria-label="Abrir menu de navegação"
+              aria-expanded={mobileMenuOpen}
+              aria-controls="main-navigation"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
             <span className="pulse"></span>
             <div>
               <h1>{pageTitle}</h1>
@@ -1637,6 +1796,8 @@ export default function App() {
             <Usuarios
               users={users}
               onCreateUser={createUser}
+              onUpdateUser={updateUser}
+              onDeleteUser={deleteUser}
               onLoadUsers={fetchUsersFromApi}
               onRegeneratePairingCode={regeneratePairingCode}
             />
@@ -1690,9 +1851,12 @@ export default function App() {
             />
           )}
           {route === '/relatorios' && <Relatorios onExportar={exportarRelatorio} />}
-          {route === '/compras' && (
+          {route === '/armazem' && (
             <Compras
+              key={route}
+              initialTab="armazem"
               onFetchIngredientes={fetchIngredientes}
+              onFetchPrevisaoEstoque={fetchPrevisaoEstoque}
               onFetchCompras={fetchCompras}
               onFetchResumoFinanceiro={fetchResumoFinanceiro}
               onRegistrarCompra={registrarCompra}
@@ -1706,6 +1870,8 @@ export default function App() {
               customersData={dashboardData.customersData}
               onFetchCustomers={fetchCustomers}
               onFetchCustomerAudit={fetchCustomerAudit}
+              onUpdateCustomer={updateCustomer}
+              onDeleteCustomer={deleteCustomer}
             />
           )}
           {route === '/pedidos_ifood' && <Pedidos_Ifood marketplaceData={dashboardData.marketplaceData} />}

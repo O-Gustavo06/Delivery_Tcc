@@ -26,7 +26,7 @@ Este projeto **não usa os padrões default do Laravel**. Siga exatamente o que 
 - Timestamps custom: `dt_cadastro` / `dt_atualizacao` (via `const CREATED_AT` / `const UPDATED_AT` no model) em vez de `created_at`/`updated_at`. Alguns models não têm `dt_atualizacao` (ex: `RotaEntregaItem`, `FechamentoCaixaEntregador`) — nesse caso `const UPDATED_AT = null;`
 - Colunas prefixadas por tipo: `vl_` (valor/decimal), `dt_` (data/timestamp), `fl_` (boolean/flag), `nm_` (nome), `ds_` (descrição/texto), `id_` (FK)
 - Enums em MAIÚSCULO: `perfil` (`ADMIN`, `GERENTE`, `CLIENTE`, `ENTREGADOR`, `ATENDENTE`), `status_entrega` (`AGUARDANDO`, `COLETADO`, `EM_ROTA`, `ENTREGUE`, `CANCELADA`), `forma` de pagamento (`PIX`, `CARTAO`, `DINHEIRO`), `tipo_pedido` (`MESA`, `DELIVERY`, `BALCAO`)
-- Models ficam em `App\Models`, controllers da API em `App\Http\Controllers\Api\...` (subpastas por área: `Api\Admin`, `Api\Motoboy`)
+- Os namespaces de aplicação permanecem em inglês (ex.: `App\Models` e `App\Http\Controllers\Api\...`), embora os diretórios físicos tenham sido traduzidos: `app/Modelos`, `app/Http/Controladores`, `app/Tarefas`, `app/Provedores` e `app/Servicos`. O `composer.json` mapeia esses prefixos PSR-4; também mapeia `Api/Administracao` para `Api\Admin` e `Api/PedidosOnline` para `Api\Delivery`. Preserve os namespaces e atualize os mapeamentos se reorganizar esses caminhos. As demais áreas seguem em pastas próprias, como `Api/Mesa` e `Api/Motoboy`.
 - Existem **duas tabelas de usuário**: `usuario` (a que o model `User` realmente usa, com `perfil`) e `users` (resquício do scaffold padrão do Laravel, tabela `role`, **não usada** — não desenvolver em cima dela, é dívida técnica pendente de limpeza)
 - Middleware de auth: `auth.api` (valida token Sanctum) + `role:xxx` (`role:admin`, `role:entregador`, etc. — compara com `perfil` em minúsculo)
 
@@ -114,7 +114,7 @@ curl -X POST http://localhost:8000/api/auth/login \
 
 ## Testes automatizados
 
-Ficam em `backend/tests/Feature` (PHPUnit puro, sem Pest). `backend/tests/Unit` existe só como pasta vazia (com `.gitkeep`) porque o `phpunit.xml` referencia as duas testsuites — sem essa pasta o `php artisan test` falha de cara com "Test directory not found", mesmo sem nenhum teste unitário de verdade no projeto.
+Os testes ficam em `backend/tests/Feature` e `backend/tests/Unit`, conforme as duas suites configuradas em `phpunit.xml`. Use `Feature` para fluxos HTTP/integrados e `Unit` para lógica isolada, sem dependência do banco.
 
 ## O que evitar
 
@@ -123,3 +123,4 @@ Ficam em `backend/tests/Feature` (PHPUnit puro, sem Pest). `backend/tests/Unit` 
 - Não usar `created_at`/`updated_at` default — sempre `dt_cadastro`/`dt_atualizacao` (ou `null` quando não fizer sentido)
 - Não desenvolver em cima da tabela `users` (Laravel default) — é a `usuario` que vale
 - Antes de criar uma migration nova, rodar `php artisan migrate:status` pra confirmar o que já foi aplicado (algumas tabelas podem ter vindo de SQL direto, fora do histórico de migrations do Laravel)
+- O schema base que não faz parte das migrations fica em `database/schema/base-mariadb.sql`; não remover migrations históricas que podem já ter sido aplicadas em outros ambientes

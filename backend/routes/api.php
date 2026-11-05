@@ -20,13 +20,13 @@ use App\Http\Controllers\Api\Motoboy\HistoricoController;
 use App\Http\Controllers\Api\Mesa\MesaSessionController;
 use App\Http\Controllers\Api\Delivery\PedidoOnlineController;
 use App\Http\Controllers\Api\Presencial\PedidoPresencialController;
-use App\Http\Controllers\Api\AsaasWebhookController;
+use App\Http\Controllers\Api\Webhook\AsaasWebhookController;
 use App\Http\Controllers\Api\Webhook\EvolutionWebhookController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function () {
-    Route::post('login', [AuthController::class, 'login']);
-    Route::post('parear', [AuthController::class, 'parear']);
+    Route::post('login', [AuthController::class, 'login'])->middleware('throttle:5,1');
+    Route::post('parear', [AuthController::class, 'parear'])->middleware('throttle:5,1');
     Route::post('logout', [AuthController::class, 'logout'])->middleware('auth.api');
     Route::get('me', [AuthController::class, 'me'])->middleware('auth.api');
 });
@@ -35,6 +35,8 @@ Route::prefix('admin')->middleware(['auth.api', 'role:admin'])->group(function (
     Route::get('dashboard', [AdminDashboardController::class, 'index']);
     Route::get('growth', [AdminGrowthController::class, 'crescimento']);
     Route::get('customers', [AdminGrowthController::class, 'clientes']);
+    Route::patch('customers/{id}', [AdminGrowthController::class, 'atualizarCliente']);
+    Route::delete('customers/{id}', [AdminGrowthController::class, 'excluirCliente']);
     Route::get('customers/{id}/audit', [AdminGrowthController::class, 'auditoria']);
     Route::get('relatorios/export', [AdminDashboardController::class, 'exportarRelatorio']);
     Route::get('users', [AdminUserController::class, 'index']);
@@ -70,6 +72,7 @@ Route::prefix('admin')->middleware(['auth.api', 'role:admin'])->group(function (
     Route::post('ingredientes', [AdminEstoqueController::class, 'criarIngrediente']);
     Route::patch('ingredientes/{id}', [AdminEstoqueController::class, 'atualizarIngrediente']);
     Route::post('estoque/movimento', [AdminEstoqueController::class, 'registrarMovimentoAvulso']);
+    Route::get('estoque/previsao', [AdminEstoqueController::class, 'previsaoEstoque']);
 
     Route::get('compras', [AdminEstoqueController::class, 'listarCompras']);
     Route::post('compras', [AdminEstoqueController::class, 'registrarCompra']);
@@ -106,19 +109,18 @@ Route::prefix('admin')->middleware(['auth.api', 'role:admin'])->group(function (
 Route::prefix('mesa')->group(function () {
     Route::get('{token}', [MesaSessionController::class, 'show']);
     Route::post('{token}/ocupar', [MesaSessionController::class, 'ocupar']);
-    Route::post('{token}/identificar', [MesaSessionController::class, 'identificar']);
-    Route::post('{token}/pedidos', [MesaSessionController::class, 'pedido']);
+    Route::post('{token}/identificar', [MesaSessionController::class, 'identificar'])->middleware('throttle:10,1');
+    Route::post('{token}/pedidos', [MesaSessionController::class, 'pedido'])->middleware('throttle:30,1');
     Route::post('{token}/fechar', [MesaSessionController::class, 'fechar']);
 });
 
 Route::prefix('pedir')->group(function () {
-    Route::post('precificar', [PedidoOnlineController::class, 'precificar']);
+    Route::post('precificar', [PedidoOnlineController::class, 'precificar'])->middleware('throttle:30,1');
     Route::get('/', [PedidoOnlineController::class, 'cardapio']);
-    Route::post('/', [PedidoOnlineController::class, 'store']);
-    Route::get('status/{codigoQr}', [PedidoOnlineController::class, 'status']);
-    Route::post('status/{codigoQr}/avaliacao', [PedidoOnlineController::class, 'avaliar']);
-    Route::post('status/{codigoQr}/push/inscrever', [PedidoOnlineController::class, 'inscreverPush']);
-    Route::get('cliente/{telefone}', [PedidoOnlineController::class, 'clientePorTelefone']);
+    Route::post('/', [PedidoOnlineController::class, 'store'])->middleware('throttle:5,1');
+    Route::get('status/{codigoQr}', [PedidoOnlineController::class, 'status'])->middleware('throttle:60,1');
+    Route::post('status/{codigoQr}/avaliacao', [PedidoOnlineController::class, 'avaliar'])->middleware('throttle:5,1');
+    Route::post('status/{codigoQr}/push/inscrever', [PedidoOnlineController::class, 'inscreverPush'])->middleware('throttle:5,1');
 });
 
 Route::post('presencial/pedidos', [PedidoPresencialController::class, 'store']);

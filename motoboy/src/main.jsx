@@ -1,6 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import './style.css'
+import './pedidos.css'
 import App from './App.jsx'
 
 const container = document.getElementById('app')

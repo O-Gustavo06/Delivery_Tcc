@@ -23,6 +23,13 @@
     },
     "autoload": {
         "psr-4": {
+            "App\\Http\\Controllers\\Api\\Admin\\": "app/Http/Controladores/Api/Administracao/",
+            "App\\Http\\Controllers\\Api\\Delivery\\": "app/Http/Controladores/Api/PedidosOnline/",
+            "App\\Http\\Controllers\\": "app/Http/Controladores/",
+            "App\\Jobs\\": "app/Tarefas/",
+            "App\\Models\\": "app/Modelos/",
+            "App\\Providers\\": "app/Provedores/",
+            "App\\Services\\": "app/Servicos/",
             "App\\": "app/",
             "Database\\Factories\\": "database/factories/",
             "Database\\Seeders\\": "database/seeders/"

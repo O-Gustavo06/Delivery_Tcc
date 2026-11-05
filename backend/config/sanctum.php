@@ -50,7 +50,7 @@ return [
     |
     */
 
-    'expiration' => null,
+    'expiration' => max(1, (int) env('SANCTUM_EXPIRATION_MINUTES', 1440)),
 
     /*
     |--------------------------------------------------------------------------

@@ -134,6 +134,40 @@
   background: transparent;
 }
 
+.app-shell .page .users-row {
+  grid-template-columns: minmax(110px, 1.2fr) minmax(130px, 1.6fr) minmax(80px, 0.6fr) minmax(90px, 0.6fr) minmax(170px, 1.2fr);
+}
+
+.app-shell .page .users-row-actions,
+.app-shell .page .client-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.app-shell .page .users-row-actions .btn,
+.app-shell .page .client-actions .btn {
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
+.app-shell .page .client-audit-link {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell .page .client-audit-link:hover {
+  color: var(--accent);
+}
+
 @media (max-width: 1000px) {
   .app-shell .page > .cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -166,5 +200,34 @@
 
   .app-shell .page-grid {
     gap: 18px;
+  }
+
+  .app-shell .page > .users-card .users-row.users-head {
+    display: none;
+  }
+
+  .app-shell .page > .users-card .users-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .page > .users-card .users-row:not(.users-head) > span:not(.users-row-actions) {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .app-shell .page > .users-card .users-row:not(.users-head) > span:not(.users-row-actions)::before {
+    content: attr(data-label);
+    flex: 0 0 100px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .app-shell .page > .users-card .users-row-actions {
+    justify-content: flex-start;
   }
 }

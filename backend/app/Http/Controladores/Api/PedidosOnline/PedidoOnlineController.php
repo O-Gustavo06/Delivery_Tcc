@@ -105,8 +105,8 @@ class PedidoOnlineController extends Controller
     {
         $data = $request->validate([
             'coupon_code' => ['nullable', 'string', 'max:50'],
-            'telefone' => ['nullable', 'string', 'max:20'],
-            'id_cliente' => ['nullable', 'integer', 'exists:cliente,id_cliente'],
+            'telefone' => ['prohibited'],
+            'id_cliente' => ['prohibited'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.id_produto' => ['required', 'integer', 'exists:produto,id_produto'],
             'items.*.qty' => ['required', 'integer', 'min:1', 'max:50'],
@@ -126,16 +126,11 @@ class PedidoOnlineController extends Controller
             return response()->json(['message' => 'Um ou mais produtos não estão disponíveis para pedido.'], 422);
         }
 
-        $identity = app(ClienteIdentityService::class);
-        $clientId = !empty($data['id_cliente'])
-            ? $identity->resolverPorId((int) $data['id_cliente'])?->id_cliente
-            : $identity->buscarPorTelefone($data['telefone'] ?? null)?->id_cliente;
         $calculation = app(PromocaoService::class)->calcular(
             (int) $empresa->id_empresa,
             $data['items'],
             $products,
             $data['coupon_code'] ?? null,
-            $clientId ? (int) $clientId : null,
         );
 
         return response()->json([
@@ -160,6 +155,7 @@ class PedidoOnlineController extends Controller
         $data = $request->validate([
             'nome' => ['required', 'string', 'max:150'],
             'telefone' => ['required', 'string', 'max:20'],
+            'id_cliente' => ['prohibited'],
             'tipo_entrega' => ['required', 'string', 'in:delivery,retirada'],
             'cep' => ['required_if:tipo_entrega,delivery', 'nullable', 'string', 'max:9'],
             'rua' => ['nullable', 'string', 'max:150'],
@@ -230,7 +226,7 @@ class PedidoOnlineController extends Controller
         try {
             $pedido = DB::transaction(function () use ($data, $empresa, $produtos, $coordenadas, $isRetirada, $taxaEntrega, $idempotencyKey) {
                 $cliente = app(ClienteIdentityService::class)
-                    ->buscarOuCriar($data['nome'], $data['telefone']);
+                    ->criarConvidadoPedidoOnline($data['nome']);
 
                 $calculation = app(PromocaoService::class)->calcular(
                     (int) $empresa->id_empresa,
@@ -254,6 +250,7 @@ class PedidoOnlineController extends Controller
                 $pedido = Pedido::create([
                     'id_empresa' => $empresa->id_empresa,
                     'id_cliente' => $cliente->id_cliente,
+                    'telefone_contato' => $data['telefone'],
                     'codigo_qr' => (string) Str::uuid(),
                     'idempotency_key' => $idempotencyKey,
                     'tipo_pedido' => $isRetirada ? 'BALCAO' : 'DELIVERY',
@@ -524,23 +521,6 @@ class PedidoOnlineController extends Controller
             'payment' => $paymentPayload ?? ($this->gatewayPaymentExpected($data) ? $this->paymentPayload($pedido) : null),
             'payment_message' => $paymentMessage,
         ];
-    }
-
-    /**
-     * GET /pedir/cliente/{telefone}
-     * Se esse telefone ja pediu antes, devolve o nome - autocompleta o cadastro pra quem
-     * ja e cliente, sem precisar redigitar o nome toda vez (mesma logica do autoatendimento
-     * da mesa).
-     */
-    public function clientePorTelefone(string $telefone): JsonResponse
-    {
-        $cliente = app(ClienteIdentityService::class)->buscarPorTelefone($telefone);
-
-        if (!$cliente || !$cliente->usuario) {
-            return response()->json(['message' => 'Cliente nao encontrado.'], 404);
-        }
-
-        return response()->json(['nome' => $cliente->usuario->nm_usuario]);
     }
 
     /**

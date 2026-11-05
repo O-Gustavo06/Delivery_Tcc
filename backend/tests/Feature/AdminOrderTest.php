@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\Empresa;
 use App\Models\Cliente;
+use App\Models\Pagamento;
+use App\Models\TransacaoPagamento;
 use Illuminate\Support\Facades\Http;
 use Tests\Concerns\CriaDadosBasicos;
 use Tests\TestCase;
@@ -205,5 +207,33 @@ class AdminOrderTest extends TestCase
         // So confere que a transicao de status nao quebra pedidos sem entrega associada.
         $this->patchJson("/api/admin/orders/{$order['id']}/status", ['status' => 'entregue'], $this->headers())
             ->assertOk();
+    }
+
+    public function test_finalizar_pedido_nao_sobrescreve_pagamento_asaas_pendente(): void
+    {
+        $this->empresaPronta();
+        $order = $this->postJson('/api/admin/orders', [
+            'type' => 'delivery',
+            'customer_name' => 'Cliente Pagamento Online',
+            'address' => 'Rua Teste, 10',
+            'payment_method' => 'pix',
+            'items' => [['name' => 'Suco', 'qty' => 1, 'price' => 12]],
+        ], $this->headers())->assertCreated()->json();
+
+        $pagamento = Pagamento::where('id_pedido', $order['id'])->firstOrFail();
+        TransacaoPagamento::create([
+            'id_pagamento' => $pagamento->id_pagamento,
+            'provedor' => 'ASAAS',
+            'nsu' => 'asaas-test-' . uniqid(),
+            'status' => 'PENDENTE',
+        ]);
+
+        $this->patchJson("/api/admin/orders/{$order['id']}/status", ['status' => 'entregue'], $this->headers())
+            ->assertOk();
+
+        $this->assertDatabaseHas('pagamento', [
+            'id_pagamento' => $pagamento->id_pagamento,
+            'status' => 'PENDENTE',
+        ]);
     }
 }

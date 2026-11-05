@@ -86,16 +86,14 @@ export default function MesaPublica({ theme, onToggleTheme }) {
 
   const [sessao, setSessao] = useState(() => {
     try {
-      return JSON.parse(window.localStorage.getItem(sessionKey)) || null
+      const salva = JSON.parse(window.localStorage.getItem(sessionKey))
+      return salva?.sessionToken && salva?.nome ? salva : null
     } catch {
       return null
     }
   })
 
-  const [telefone, setTelefone] = useState('')
   const [nome, setNome] = useState('')
-  const [cpf, setCpf] = useState('')
-  const [precisaNome, setPrecisaNome] = useState(false)
   const [erroIdentificacao, setErroIdentificacao] = useState('')
   const [identificando, setIdentificando] = useState(false)
 
@@ -196,28 +194,28 @@ export default function MesaPublica({ theme, onToggleTheme }) {
     setErroIdentificacao('')
     setIdentificando(true)
 
-    const response = await fetch(`${API_BASE}/mesa/${token}/identificar`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ telefone, nome: nome || undefined, cpf: cpf || undefined }),
-    })
-    const payload = await response.json().catch(() => ({}))
-    setIdentificando(false)
+    try {
+      const response = await fetch(`${API_BASE}/mesa/${token}/identificar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ nome }),
+      })
+      const payload = await response.json().catch(() => ({}))
 
-    if (!response.ok) {
-      if (payload.novo_cliente) {
-        setPrecisaNome(true)
-        setErroIdentificacao('Primeira vez aqui? Preenche seu nome tambem.')
-      } else {
-        setErroIdentificacao(payload.message || 'Nao foi possivel identificar.')
+      if (!response.ok) {
+        setErroIdentificacao(payload.message || 'Não foi possível iniciar sua sessão na mesa.')
+        return
       }
-      return
-    }
 
-    const novaSessao = { idCliente: payload.cliente.id, nome: payload.cliente.nome }
-    window.localStorage.setItem(sessionKey, JSON.stringify(novaSessao))
-    setSessao(novaSessao)
-    await carregarMesa()
+      const novaSessao = { sessionToken: payload.session_token, nome: payload.cliente.nome }
+      window.localStorage.setItem(sessionKey, JSON.stringify(novaSessao))
+      setSessao(novaSessao)
+      await carregarMesa()
+    } catch {
+      setErroIdentificacao('Não foi possível conectar ao restaurante.')
+    } finally {
+      setIdentificando(false)
+    }
   }
 
   const adicionarAoCarrinho = (produtoId) => {
@@ -260,7 +258,6 @@ export default function MesaPublica({ theme, onToggleTheme }) {
   const { quote: cotacaoCupom, error: erroCupom, loading: validandoCupom } = usePromotionQuote({
     code: cupomAplicado,
     items: itensParaCotacao,
-    clientId: sessao?.idCliente,
   })
   const totalComCupom = cotacaoCupom?.subtotal ?? totalCarrinho
   const descontoAutomatico = cotacaoCupom?.automatic_discount ?? Math.max(0, subtotalOriginalCarrinho - totalCarrinho)
@@ -275,13 +272,17 @@ export default function MesaPublica({ theme, onToggleTheme }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
-          id_cliente: sessao.idCliente,
+          session_token: sessao.sessionToken,
           coupon_code: cupomAplicado || undefined,
           items: itensCarrinho.map((item) => ({ id_produto: item.id, qty: item.qty })),
         }),
       })
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) {
+        if (response.status === 401) {
+          window.localStorage.removeItem(sessionKey)
+          setSessao(null)
+        }
         const validationError = Object.values(payload.errors || {}).flat()[0]
         setErroPedido(validationError || payload.message || 'Não foi possível enviar o pedido.')
         return
@@ -375,34 +376,17 @@ export default function MesaPublica({ theme, onToggleTheme }) {
           </header>
           <div className="mp-center">
             <div className="mp-card">
-              <h3>Antes de pedir, seu telefone</h3>
-              <p>Usamos pra identificar seu pedido e o do resto da mesa.</p>
+              <h3>Como podemos chamar você?</h3>
+              <p>Seu pedido fica vinculado somente a esta sessão da mesa.</p>
               <form onSubmit={handleIdentificar}>
                 <input
                   type="text"
-                  inputMode="tel"
-                  placeholder="Seu telefone"
-                  value={telefone}
-                  onChange={(event) => setTelefone(event.target.value)}
+                  placeholder="Seu nome"
+                  value={nome}
+                  onChange={(event) => setNome(event.target.value)}
+                  maxLength={150}
                   required
                 />
-                {precisaNome && (
-                  <>
-                    <input
-                      type="text"
-                      placeholder="Seu nome"
-                      value={nome}
-                      onChange={(event) => setNome(event.target.value)}
-                      required
-                    />
-                    <input
-                      type="text"
-                      placeholder="CPF (opcional)"
-                      value={cpf}
-                      onChange={(event) => setCpf(event.target.value)}
-                    />
-                  </>
-                )}
                 {erroIdentificacao && <small className="mp-error">{erroIdentificacao}</small>}
                 <button className="mp-primary-btn" type="submit" disabled={identificando}>
                   {identificando ? 'Entrando...' : 'Continuar'}

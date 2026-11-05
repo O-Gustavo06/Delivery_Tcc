@@ -28,7 +28,11 @@ class AuthController extends Controller
             return response()->json(['message' => 'Usuario inativo.'], 403);
         }
 
-        $token = $user->createToken('api-token')->plainTextToken;
+        $token = $user->createToken(
+            'api-token',
+            ['*'],
+            now()->addMinutes((int) config('sanctum.expiration', 1440))
+        )->plainTextToken;
 
         return response()->json([
             'token' => $token,
@@ -68,7 +72,11 @@ class AuthController extends Controller
             'codigo_pareamento_expira_em' => null,
         ]);
 
-        $token = $user->createToken('api-token')->plainTextToken;
+        $token = $user->createToken(
+            'api-token',
+            ['*'],
+            now()->addMinutes((int) config('sanctum.expiration', 1440))
+        )->plainTextToken;
 
         return response()->json([
             'token' => $token,
@@ -101,4 +109,3 @@ class AuthController extends Controller
         ];
     }
 }
-

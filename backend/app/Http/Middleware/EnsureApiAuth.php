@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use Closure;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Laravel\Sanctum\PersonalAccessToken;
 use Symfony\Component\HttpFoundation\Response;
@@ -19,13 +20,24 @@ class EnsureApiAuth
 
         $accessToken = PersonalAccessToken::findToken($token);
 
-        if (!$accessToken || !$accessToken->tokenable) {
+        if (!$accessToken || !($accessToken->tokenable instanceof User)) {
             return response()->json(['message' => 'Token invalido.'], 401);
         }
 
-        $request->setUserResolver(fn () => $accessToken->tokenable);
+        $user = $accessToken->tokenable;
+        $expirationMinutes = (int) config('sanctum.expiration', 1440);
+        $expired = ($accessToken->expires_at?->isPast() ?? false)
+            || ($expirationMinutes > 0
+                && $accessToken->created_at?->lt(now()->subMinutes($expirationMinutes)));
+
+        if (!$user->fl_ativo || $expired) {
+            $accessToken->delete();
+
+            return response()->json(['message' => 'Token invalido ou expirado.'], 401);
+        }
+
+        $request->setUserResolver(fn () => $user);
 
         return $next($request);
     }
 }
-

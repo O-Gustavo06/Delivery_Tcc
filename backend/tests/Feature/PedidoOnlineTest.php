@@ -136,24 +136,7 @@ class PedidoOnlineTest extends TestCase
         $this->assertDatabaseMissing('pedido', ['vl_total' => 15]);
     }
 
-    public function test_busca_cliente_por_telefone_devolve_nome_de_quem_ja_pediu(): void
-    {
-        $empresa = $this->criarEmpresa();
-        $categoria = $this->criarCategoria($empresa);
-        $produto = $this->criarProduto($empresa, $categoria, ['vl_preco_base' => 10]);
-
-        $this->postJson('/api/pedir', $this->pedidoPayload([
-            'nome' => 'Fulano da Silva',
-            'telefone' => '11988887777',
-            'items' => [['id_produto' => $produto->id_produto, 'qty' => 1]],
-        ]))->assertStatus(201);
-
-        $this->getJson('/api/pedir/cliente/11988887777')
-            ->assertOk()
-            ->assertJsonPath('nome', 'Fulano da Silva');
-    }
-
-    public function test_busca_cliente_por_telefone_desconhecido_retorna_404(): void
+    public function test_consulta_publica_de_nome_por_telefone_nao_existe(): void
     {
         $this->getJson('/api/pedir/cliente/11900000000')->assertStatus(404);
     }
@@ -202,20 +185,52 @@ class PedidoOnlineTest extends TestCase
         ]);
     }
 
-    public function test_cliente_com_mesmo_telefone_nao_duplica_cadastro(): void
+    public function test_pedidos_publicos_nao_vinculam_cliente_existente_pelo_telefone(): void
     {
         $empresa = $this->criarEmpresa();
         $categoria = $this->criarCategoria($empresa);
         $produto = $this->criarProduto($empresa, $categoria, ['vl_preco_base' => 10]);
+        $telefone = '11900007777';
+        $usuario = $this->criarUsuario('CLIENTE');
+        $clienteExistente = \App\Models\Cliente::create([
+            'id_usuario' => $usuario->id_usuario,
+            'telefone' => $telefone,
+        ]);
 
-        $payload = $this->pedidoPayload(['items' => [['id_produto' => $produto->id_produto, 'qty' => 1]]]);
+        $payload = $this->pedidoPayload([
+            'telefone' => $telefone,
+            'items' => [['id_produto' => $produto->id_produto, 'qty' => 1]],
+        ]);
 
         $this->postJson('/api/pedir', $payload)->assertStatus(201);
         $this->postJson('/api/pedir', $payload)->assertStatus(201);
 
-        $this->assertDatabaseCount('cliente', 1);
+        $pedidos = \App\Models\Pedido::where('canal_origem', 'ONLINE')->orderBy('id_pedido')->get();
+        $this->assertCount(2, $pedidos);
+        $this->assertNotSame($clienteExistente->id_cliente, $pedidos[0]->id_cliente);
+        $this->assertNotSame($pedidos[0]->id_cliente, $pedidos[1]->id_cliente);
+        $this->assertSame($telefone, $pedidos[0]->telefone_contato);
+        $this->assertSame($telefone, $pedidos[1]->telefone_contato);
+        $this->assertDatabaseHas('cliente', [
+            'id_cliente' => $pedidos[0]->id_cliente,
+            'telefone' => null,
+            'cpf' => null,
+        ]);
         $this->assertDatabaseHas('pedido', ['nr_pedido_delivery' => 1]);
         $this->assertDatabaseHas('pedido', ['nr_pedido_delivery' => 2]);
+    }
+
+    public function test_precificacao_publica_rejeita_identidade_de_cliente_informada_pelo_navegador(): void
+    {
+        $empresa = $this->criarEmpresa();
+        $categoria = $this->criarCategoria($empresa);
+        $produto = $this->criarProduto($empresa, $categoria);
+
+        $this->postJson('/api/pedir/precificar', [
+            'telefone' => '11900007777',
+            'id_cliente' => 1,
+            'items' => [['id_produto' => $produto->id_produto, 'qty' => 1]],
+        ])->assertUnprocessable();
     }
 
     public function test_repetir_post_com_mesma_chave_retorna_o_mesmo_pedido(): void

@@ -12,14 +12,16 @@ use App\Models\Pedido;
 use App\Models\Produto;
 use App\Services\ClienteIdentityService;
 use App\Services\PromocaoService;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
  * Autoatendimento da mesa: o cliente bipa o QR impresso na mesa (mesa.qr_code_token),
- * se identifica pelo telefone, ve o cardapio de verdade e pede direto por aqui. Tudo publico
+ * se identifica com um nome de visita, ve o cardapio de verdade e pede direto por aqui. Tudo publico
  * (sem token de acesso) - a "seguranca" e o token aleatorio do QR, igual ao codigo_qr do pedido.
  */
 class MesaSessionController extends Controller
@@ -129,8 +131,8 @@ class MesaSessionController extends Controller
 
     /**
      * POST /mesa/{token}/identificar
-     * Body: { telefone, nome?, cpf? }
-     * Primeira vez na mesa: precisa nome (mini-cadastro). Depois disso, so o telefone basta.
+     * Body: { nome }
+     * A sessao da mesa usa um cliente de visita, sem consultar contas pelo telefone.
      * Tambem garante que existe uma comanda aberta pra essa mesa (cria se for a primeira pessoa).
      */
     public function identificar(Request $request, string $token): JsonResponse
@@ -141,42 +143,28 @@ class MesaSessionController extends Controller
         }
 
         $data = $request->validate([
-            'telefone' => ['required', 'string', 'max:20'],
-            'nome' => ['nullable', 'string', 'max:150'],
-            'cpf' => ['nullable', 'string', 'max:14'],
+            'nome' => ['required', 'string', 'max:150'],
         ]);
 
-        $identity = app(ClienteIdentityService::class);
-        $cliente = $identity->buscarPorTelefone($data['telefone']);
-
-        if (!$cliente) {
-            if (empty($data['nome'])) {
-                return response()->json([
-                    'message' => 'Primeira vez aqui? Preciso do seu nome tambem.',
-                    'novo_cliente' => true,
-                ], 422);
-            }
-
-            $cliente = $identity->buscarOuCriar($data['nome'], $data['telefone'], $data['cpf'] ?? null);
-        }
+        $cliente = app(ClienteIdentityService::class)->buscarOuCriar(trim($data['nome']), null);
 
         $comanda = self::garantirComandaAberta($mesa);
 
         return response()->json([
-            'cliente' => [
-                'id' => $cliente->id_cliente,
-                'nome' => $cliente->usuario?->nm_usuario,
-            ],
+            'cliente' => ['nome' => $cliente->usuario?->nm_usuario],
+            'session_token' => Crypt::encrypt([
+                'cliente_id' => (int) $cliente->id_cliente,
+                'mesa_id' => (int) $mesa->id_mesa,
+                'expires_at' => now()->addHours(12)->timestamp,
+            ]),
             'id_comanda' => $comanda->id_comanda,
         ]);
     }
 
     /**
      * POST /mesa/{token}/pedidos
-     * Body: { id_cliente? | nome?, items: [{ id_produto, qty, note? }] }
-     * id_cliente: fluxo da /mesa (cliente ja se identificou pelo telefone). nome: cardapio
-     * presencial (QR da mesa), onde o cliente so informa o nome - vira um cliente novo na
-     * primeira vez e o front reaproveita o id_cliente devolvido nos proximos pedidos.
+     * Body: { session_token, items: [{ id_produto, qty, note? }] }
+     * A sessao e criptografada pelo servidor e vinculada a mesa e ao cliente de visita.
      * Preco sempre vem do catalogo (nunca do cliente) - evita manipulacao no autoatendimento.
      */
     public function pedido(Request $request, string $token): JsonResponse
@@ -187,15 +175,23 @@ class MesaSessionController extends Controller
         }
 
         $data = $request->validate([
-            'id_cliente' => ['nullable', 'integer', 'exists:cliente,id_cliente', 'required_without:nome'],
-            'nome' => ['nullable', 'string', 'max:150', 'required_without:id_cliente'],
-            'telefone' => ['nullable', 'string', 'max:20'],
+            'session_token' => ['required', 'string', 'max:2048'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.id_produto' => ['required', 'integer', 'exists:produto,id_produto'],
             'items.*.qty' => ['required', 'integer', 'min:1', 'max:50'],
             'items.*.note' => ['nullable', 'string', 'max:300'],
             'coupon_code' => ['nullable', 'string', 'max:50'],
         ]);
+
+        $mesaSession = $this->validarSessaoMesa($data['session_token'], (int) $mesa->id_mesa);
+        if (!$mesaSession) {
+            return response()->json(['message' => 'Sessão da mesa inválida ou expirada. Identifique-se novamente.'], 401);
+        }
+        $cliente = app(ClienteIdentityService::class)->resolverPorId($mesaSession['cliente_id']);
+        if (!$cliente || $cliente->id_cliente_principal) {
+            return response()->json(['message' => 'Sessão da mesa inválida ou expirada. Identifique-se novamente.'], 401);
+        }
+        $data['id_cliente'] = (int) $cliente->id_cliente;
 
         $comanda = $mesa->comandaAberta()->first();
         if ($comanda && $comanda->status !== 'ABERTA') {
@@ -204,28 +200,13 @@ class MesaSessionController extends Controller
         // Mesa sem comanda (ex.: caixa liberou e o cliente continuou pedindo): reabre na hora.
         $comanda ??= self::garantirComandaAberta($mesa);
 
-        $identity = app(ClienteIdentityService::class);
-        if (!empty($data['id_cliente'])) {
-            $data['id_cliente'] = $identity->resolverPorId((int) $data['id_cliente'])?->id_cliente;
-        } elseif (!empty($data['telefone'])) {
-            $data['id_cliente'] = $identity->buscarPorTelefone($data['telefone'])?->id_cliente;
-        }
-
-        if (empty($data['id_cliente'])) {
-            $data['id_cliente'] = $identity
-                ->buscarOuCriar($data['nome'], $data['telefone'] ?? null)
-                ->id_cliente;
-        }
-
         $produtos = Produto::whereIn('id_produto', collect($data['items'])->pluck('id_produto'))
             ->where('id_empresa', $mesa->id_empresa)
             ->where('fl_ativo', true)
             ->get()
             ->keyBy('id_produto');
 
-        $nomeCliente = !empty($data['nome'])
-            ? trim($data['nome'])
-            : $identity->resolverPorId((int) $data['id_cliente'])?->usuario?->nm_usuario;
+        $nomeCliente = $cliente->usuario?->nm_usuario;
 
         [$pedido, $calculation] = DB::transaction(function () use ($data, $mesa, $comanda, $produtos, $nomeCliente) {
             $calculation = app(PromocaoService::class)->calcular(
@@ -326,11 +307,31 @@ class MesaSessionController extends Controller
 
         return response()->json([
             ...$this->comandaPayload($comanda),
-            'id_cliente' => (int) $data['id_cliente'],
             'id_pedido' => $pedido->id_pedido,
             'pedido_total' => $calculation['subtotal'],
             'desconto_aplicado' => $calculation['discount'],
         ], 201);
+    }
+
+    /**
+     * Returns the customer ID only for a valid, unexpired token issued for this table.
+     */
+    private function validarSessaoMesa(string $token, int $mesaId): ?array
+    {
+        try {
+            $payload = Crypt::decrypt($token);
+        } catch (DecryptException) {
+            return null;
+        }
+
+        if (!is_array($payload)
+            || (int) ($payload['mesa_id'] ?? 0) !== $mesaId
+            || (int) ($payload['cliente_id'] ?? 0) < 1
+            || (int) ($payload['expires_at'] ?? 0) <= now()->timestamp) {
+            return null;
+        }
+
+        return ['cliente_id' => (int) $payload['cliente_id']];
     }
 
     /**
