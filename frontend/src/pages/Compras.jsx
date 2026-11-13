@@ -593,6 +593,151 @@ function PrevisaoEstoqueTab({ onFetchPrevisaoEstoque }) {
   )
 }
 
+function CategoriasProdutosTab({ onFetchCategorias, onCriarCategoria, onAtualizarCategoria }) {
+  const [categorias, setCategorias] = useState([])
+  const [nome, setNome] = useState('')
+  const [carregando, setCarregando] = useState(true)
+  const [salvando, setSalvando] = useState(false)
+  const [erro, setErro] = useState('')
+  const [erroLista, setErroLista] = useState('')
+  const [listaCarregada, setListaCarregada] = useState(false)
+  const [aviso, setAviso] = useState('')
+  const [tentativa, setTentativa] = useState(0)
+  const [categoriaEditando, setCategoriaEditando] = useState(null)
+  const [nomeEditado, setNomeEditado] = useState('')
+
+  useEffect(() => {
+    let ativa = true
+    setCarregando(true)
+    setErroLista('')
+    onFetchCategorias()
+      .then((resultado) => {
+        if (!ativa) return
+        if (!Array.isArray(resultado?.data)) {
+          setListaCarregada(false)
+          setErroLista('Não foi possível carregar as categorias. Verifique a conexão e tente novamente.')
+          return
+        }
+        setCategorias(resultado.data)
+        setListaCarregada(true)
+      })
+      .catch(() => {
+        if (ativa) {
+          setListaCarregada(false)
+          setErroLista('Não foi possível carregar as categorias. Verifique a conexão e tente novamente.')
+        }
+      })
+      .finally(() => { if (ativa) setCarregando(false) })
+    return () => { ativa = false }
+  }, [onFetchCategorias, tentativa])
+
+  const cadastrar = async (event) => {
+    event.preventDefault()
+    const nomeLimpo = nome.trim()
+    setErro('')
+    setAviso('')
+    if (!nomeLimpo) {
+      setErro('Informe o nome da categoria.')
+      return
+    }
+    setSalvando(true)
+    try {
+      const resultado = await onCriarCategoria(nomeLimpo)
+      if (!resultado.ok) {
+        setErro(resultado.message)
+        return
+      }
+      if (listaCarregada && resultado.categoria?.id && resultado.categoria?.nome) {
+        setCategorias((anteriores) => [...anteriores, resultado.categoria])
+      } else {
+        setTentativa((valor) => valor + 1)
+      }
+      setNome('')
+      setAviso('Categoria cadastrada. Ela já pode ser usada no cardápio.')
+    } catch (error) {
+      setErro(`Não foi possível cadastrar a categoria: ${error.message}`)
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  const editar = async (event) => {
+    event.preventDefault()
+    const nomeLimpo = nomeEditado.trim()
+    setErro('')
+    setAviso('')
+    if (!nomeLimpo) {
+      setErro('Informe o nome da categoria.')
+      return
+    }
+    setSalvando(true)
+    try {
+      const resultado = await onAtualizarCategoria(categoriaEditando, nomeLimpo)
+      if (!resultado.ok) {
+        setErro(resultado.message)
+        return
+      }
+      if (resultado.categoria?.id === categoriaEditando && resultado.categoria?.nome) {
+        setCategorias((anteriores) => anteriores.map((categoria) => categoria.id === categoriaEditando ? resultado.categoria : categoria))
+      } else {
+        setTentativa((valor) => valor + 1)
+      }
+      setCategoriaEditando(null)
+      setNomeEditado('')
+      setAviso('Categoria alterada. O novo nome também será exibido no cardápio.')
+    } catch (error) {
+      setErro(`Não foi possível alterar a categoria: ${error.message}`)
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  return (
+    <article className="card section-card">
+      <div className="section-head">
+        <div>
+          <h2>Categorias de produtos</h2>
+          <p>Organize os produtos vendidos no cardápio, como lanches, bolos, salgados, doces e bebidas. Estas categorias não alteram o estoque de ingredientes.</p>
+        </div>
+      </div>
+      {erro && <div className="login-error" role="alert">{erro}</div>}
+      {erroLista && <div className="login-error" role="alert">{erroLista} <button className="btn btn-light" type="button" onClick={() => setTentativa((valor) => valor + 1)}>Tentar carregar novamente</button></div>}
+      {aviso && <p role="status">{aviso}</p>}
+      {carregando ? <p role="status">Carregando categorias...</p> : (
+        <>
+          <form onSubmit={cadastrar} style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'end' }}>
+            <label className="filter-group" style={{ flex: '1 1 220px' }}>Nome da categoria
+              <input value={nome} onChange={(event) => setNome(event.target.value)} maxLength={100} placeholder="Ex.: Lanches" required />
+            </label>
+            <button type="submit" className="btn btn-primary" disabled={salvando}>{salvando ? 'Salvando...' : 'Cadastrar categoria'}</button>
+          </form>
+          <h3>Categorias cadastradas</h3>
+          {listaCarregada && categorias.length === 0 && <p>Nenhuma categoria cadastrada.</p>}
+          {listaCarregada && categorias.map((categoria) => (
+            <div className="item-row" key={categoria.id} style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+              {categoriaEditando === categoria.id ? (
+                <form onSubmit={editar} style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'end', flex: '1 1 220px' }}>
+                  <label className="filter-group" style={{ flex: '1 1 220px' }}>Editar nome da categoria
+                    <input value={nomeEditado} onChange={(event) => setNomeEditado(event.target.value)} maxLength={100} required />
+                  </label>
+                  <button type="submit" className="btn btn-primary" disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
+                  <button type="button" className="btn btn-light" disabled={salvando} onClick={() => { setCategoriaEditando(null); setErro('') }}>Cancelar</button>
+                </form>
+              ) : (
+                <>
+                  <strong style={{ flex: '1 1 150px' }}>{categoria.nome}</strong>
+                  <span className={`badge ${categoria.ativa ? 'badge-green' : 'badge-muted'}`}>{categoria.ativa ? 'Ativa' : 'Inativa'}</span>
+                  <button type="button" className="btn btn-light" disabled={salvando} aria-label={`Editar categoria ${categoria.nome}`} onClick={() => { setCategoriaEditando(categoria.id); setNomeEditado(categoria.nome); setErro(''); setAviso('') }}>Editar</button>
+                </>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+    </article>
+  )
+}
+
 export default function Compras({
   initialTab = 'compras',
   onFetchIngredientes,
@@ -603,6 +748,9 @@ export default function Compras({
   onCriarIngrediente,
   onEditarIngrediente,
   onRegistrarMovimentoAvulso,
+  onFetchCategorias,
+  onCriarCategoria,
+  onAtualizarCategoria,
 }) {
   const [aba, setAba] = useState(initialTab)
   const [ingredientes, setIngredientes] = useState([])
@@ -665,6 +813,7 @@ export default function Compras({
           { id: 'armazem', label: 'Armazém' },
           { id: 'previsao', label: 'Previsão de Estoque' },
           { id: 'compras', label: 'Compras e Lucros' },
+          { id: 'categorias', label: 'Categorias de produtos' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -737,6 +886,8 @@ export default function Compras({
       )}
 
       {aba === 'previsao' && <PrevisaoEstoqueTab onFetchPrevisaoEstoque={onFetchPrevisaoEstoque} />}
+
+      {aba === 'categorias' && <CategoriasProdutosTab onFetchCategorias={onFetchCategorias} onCriarCategoria={onCriarCategoria} onAtualizarCategoria={onAtualizarCategoria} />}
 
       {aba === 'compras' && (
         <>

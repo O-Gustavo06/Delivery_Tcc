@@ -30,7 +30,7 @@ html.cp-pagina body { background: #000; overscroll-behavior-y: none; }
   text-align: left; touch-action: manipulation; box-shadow: none;
 }
 .cp-site a { color: inherit; text-decoration: none; }
-.cp-site :focus-visible { outline: 1px solid #fff; outline-offset: 4px; }
+.cp-site :focus-visible { outline: 2px solid #fff; outline-offset: 4px; }
 .cp-site img, .cp-site video { display: block; }
 
 /* detalhes tipográficos */
@@ -215,7 +215,7 @@ html.cp-pagina body { background: #000; overscroll-behavior-y: none; }
 .cp-cupom button:disabled { opacity: .5; cursor: not-allowed; }
 .cp-site .cp-campo input, .cp-site .cp-campo textarea {
   width: 100%; background: #0d0c0b; color: var(--ink); border: 1px solid var(--line); border-radius: 2px;
-  padding: 14px; font: 300 1rem/1.4 var(--sans); outline: none; resize: vertical;
+  padding: 14px; font: 300 1rem/1.4 var(--sans); resize: vertical;
 }
 .cp-site .cp-campo input:focus, .cp-site .cp-campo textarea:focus { border-color: var(--red); }
 .cp-campo input::placeholder, .cp-campo textarea::placeholder { color: #5c5854; }

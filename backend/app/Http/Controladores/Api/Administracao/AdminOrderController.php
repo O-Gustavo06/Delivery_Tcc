@@ -208,17 +208,22 @@ class AdminOrderController extends Controller
                 abort(422, 'Nenhuma empresa cadastrada para receber pedidos.');
             }
 
+            $mesaId = null;
+            if ($data['type'] === 'mesa') {
+                $mesa = Mesa::where('id_empresa', $companyId)->where('nr_mesa', $data['table_number'])
+                    ->where('fl_ativa', true)->lockForUpdate()->first();
+                if (! $mesa) {
+                    abort(422, 'Mesa não encontrada ou inativa.');
+                }
+                $mesaId = $mesa->id_mesa;
+            }
+
             $telefoneIdentidade = ClienteIdentityService::normalizarTelefone($data['customer_phone'] ?? null)
                 ? ($data['customer_phone'] ?? null)
                 : null;
             $cliente = app(ClienteIdentityService::class)
                 ->buscarOuCriar($data['customer_name'], $telefoneIdentidade);
             $clientId = $cliente->id_cliente;
-
-            $mesaId = null;
-            if ($data['type'] === 'mesa') {
-                $mesaId = Mesa::where('nr_mesa', $data['table_number'])->value('id_mesa');
-            }
 
             $total = collect($data['items'])->sum(fn (array $item) => $item['qty'] * $item['price']);
             $canalOrigem = self::FRONT_TO_DB_CHANNEL[$data['channel'] ?? 'loja'];

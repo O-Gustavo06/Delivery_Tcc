@@ -13,6 +13,11 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
+        $middleware->trimStrings(except: [
+            fn (\Illuminate\Http\Request $request) => $request->isMethod('PUT') && (
+                $request->is('api/admin/fiscal/documentos/*/xml-rascunho') || $request->is('api/admin/fiscal/xml-editor')
+            ),
+        ]);
         $middleware->alias([
             'auth.api' => \App\Http\Middleware\EnsureApiAuth::class,
             'role' => \App\Http\Middleware\EnsureRole::class,

@@ -8,13 +8,13 @@ use Symfony\Component\HttpFoundation\Response;
 
 class EnsureRole
 {
-    public function handle(Request $request, Closure $next, string $role): Response
+    public function handle(Request $request, Closure $next, string ...$roles): Response
     {
         $user = $request->user();
 
         $userPerfil = strtolower($user?->perfil ?? '');
 
-        if (!$user || $userPerfil !== strtolower($role)) {
+        if (!$user || !in_array($userPerfil, array_map('strtolower', $roles), true)) {
             return response()->json(['message' => 'Acesso negado.'], 403);
         }
 

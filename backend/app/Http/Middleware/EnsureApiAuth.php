@@ -28,7 +28,9 @@ class EnsureApiAuth
         $expirationMinutes = (int) config('sanctum.expiration', 1440);
         $expired = ($accessToken->expires_at?->isPast() ?? false)
             || ($expirationMinutes > 0
-                && $accessToken->created_at?->lt(now()->subMinutes($expirationMinutes)));
+                && $accessToken->created_at?->lt(now()->subMinutes($expirationMinutes)))
+            || (strtoupper($user->perfil) === 'ADMIN'
+                && ($accessToken->last_used_at ?? $accessToken->created_at)->lte(now()->subHour()));
 
         if (!$user->fl_ativo || $expired) {
             $accessToken->delete();
@@ -36,6 +38,7 @@ class EnsureApiAuth
             return response()->json(['message' => 'Token invalido ou expirado.'], 401);
         }
 
+        $user->withAccessToken($accessToken);
         $request->setUserResolver(fn () => $user);
 
         return $next($request);

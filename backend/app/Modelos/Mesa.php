@@ -20,7 +20,13 @@ class Mesa extends Model
         'status_ocupacao',
         'qr_code_token',
         'capacidade',
+        'fl_ativa',
     ];
+
+    protected function casts(): array
+    {
+        return ['fl_ativa' => 'boolean'];
+    }
 
     public function empresa()
     {

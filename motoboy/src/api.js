@@ -55,6 +55,8 @@ async function request(path, { method = 'GET', body, auth = true } = {}) {
 
 export const api = {
   parear: (codigo) => request('/auth/parear', { method: 'POST', body: { codigo }, auth: false }),
+  login: (email, password) => request('/auth/login-motoboy', { method: 'POST', body: { email, password }, auth: false }),
+  activity: () => request('/auth/activity', { method: 'POST' }),
   logout: () => request('/auth/logout', { method: 'POST' }).catch(() => null),
   me: () => request('/auth/me'),
   scan: (codigoQr) => request(`/motoboy/pedidos/scan/${encodeURIComponent(codigoQr)}`),

@@ -140,6 +140,7 @@ export default function Usuarios({ users, onCreateUser, onUpdateUser, onDeleteUs
   }
 
   return (
+    <>
     <section className="card users-card fade-in" style={{ display: 'grid', gap: 20 }}>
       {pairing && <PairingQrPanel pairing={pairing} onClose={() => setPairing(null)} />}
 
@@ -151,7 +152,7 @@ export default function Usuarios({ users, onCreateUser, onUpdateUser, onDeleteUs
             <div className="users-row users-head">
               <span>Nome</span>
               <span>Email / Telefone</span>
-              <span>Role</span>
+              <span>Perfil</span>
               <span>Status</span>
               <span>Ações</span>
             </div>
@@ -159,7 +160,7 @@ export default function Usuarios({ users, onCreateUser, onUpdateUser, onDeleteUs
               <div className="users-row" key={user.id}>
                 <span data-label="Nome">{user.name}</span>
                 <span data-label="Email / telefone">{user.role === 'ENTREGADOR' ? user.telefone || '-' : user.email}</span>
-                <span className="badge badge-muted" data-label="Perfil">{user.role}</span>
+                <span data-label="Perfil"><span className="badge badge-muted">{user.role}</span></span>
                 <span data-label="Status" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span className={`badge ${user.isActive ? 'badge-green' : 'badge-red'}`}>
                     {user.isActive ? 'ativo' : 'inativo'}
@@ -190,7 +191,7 @@ export default function Usuarios({ users, onCreateUser, onUpdateUser, onDeleteUs
               <input id="userName" name="name" type="text" required />
             </div>
             <div className="filter-group">
-              <label htmlFor="userRole">Role</label>
+              <label htmlFor="userRole">Perfil</label>
               <select id="userRole" name="role" value={role} onChange={(event) => setRole(event.target.value)}>
                 <option value="ADMIN">Admin</option>
                 <option value="GERENTE">Gerente</option>
@@ -238,7 +239,7 @@ export default function Usuarios({ users, onCreateUser, onUpdateUser, onDeleteUs
           </form>
         </div>
       </div>
-
+    </section>
       {editingUser && (
         <div className="modal-overlay" onClick={() => setEditingUser(null)}>
           <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="editUserTitle" onClick={(event) => event.stopPropagation()}>
@@ -283,6 +284,6 @@ export default function Usuarios({ users, onCreateUser, onUpdateUser, onDeleteUs
           </div>
         </div>
       )}
-    </section>
+    </>
   )
 }

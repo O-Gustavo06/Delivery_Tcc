@@ -32,7 +32,7 @@ class MesaSessionController extends Controller
      */
     public function show(Request $request, string $token): JsonResponse
     {
-        $mesa = Mesa::where('qr_code_token', $token)->first();
+        $mesa = Mesa::where('qr_code_token', $token)->where('fl_ativa', true)->first();
 
         if (!$mesa) {
             return response()->json(['message' => 'Mesa nao encontrada.'], 404);
@@ -80,7 +80,7 @@ class MesaSessionController extends Controller
      */
     public function ocupar(Request $request, string $token): JsonResponse
     {
-        $mesa = Mesa::where('qr_code_token', $token)->first();
+        $mesa = Mesa::where('qr_code_token', $token)->where('fl_ativa', true)->first();
 
         if (!$mesa) {
             return response()->json(['message' => 'Mesa nao encontrada.'], 404);
@@ -96,7 +96,7 @@ class MesaSessionController extends Controller
     {
         return DB::transaction(function () use ($mesa) {
             // lockForUpdate: dois celulares lendo o QR ao mesmo tempo nao abrem duas comandas.
-            Mesa::whereKey($mesa->id_mesa)->lockForUpdate()->first();
+            $mesa = Mesa::whereKey($mesa->id_mesa)->where('fl_ativa', true)->lockForUpdate()->firstOrFail();
 
             $comanda = $mesa->comandaAberta()->first();
             if (!$comanda) {
@@ -137,7 +137,7 @@ class MesaSessionController extends Controller
      */
     public function identificar(Request $request, string $token): JsonResponse
     {
-        $mesa = Mesa::where('qr_code_token', $token)->first();
+        $mesa = Mesa::where('qr_code_token', $token)->where('fl_ativa', true)->first();
         if (!$mesa) {
             return response()->json(['message' => 'Mesa nao encontrada.'], 404);
         }
@@ -169,7 +169,7 @@ class MesaSessionController extends Controller
      */
     public function pedido(Request $request, string $token): JsonResponse
     {
-        $mesa = Mesa::where('qr_code_token', $token)->first();
+        $mesa = Mesa::where('qr_code_token', $token)->where('fl_ativa', true)->first();
         if (!$mesa) {
             return response()->json(['message' => 'Mesa nao encontrada.'], 404);
         }
@@ -343,7 +343,7 @@ class MesaSessionController extends Controller
      */
     public function fechar(Request $request, string $token): JsonResponse
     {
-        $mesa = Mesa::where('qr_code_token', $token)->first();
+        $mesa = Mesa::where('qr_code_token', $token)->where('fl_ativa', true)->first();
         if (!$mesa) {
             return response()->json(['message' => 'Mesa nao encontrada.'], 404);
         }

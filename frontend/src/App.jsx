@@ -10,6 +10,7 @@ import Entrega from './pages/Entrega.jsx'
 import Relatorios from './pages/Relatorios.jsx'
 import Compras from './pages/Compras.jsx'
 import Cardapio from './pages/Cardapio.jsx'
+import FiscalContabil from './pages/FiscalContabil.jsx'
 import Promocoes from './pages/Promocoes.jsx'
 import Clientes from './pages/Clientes.jsx'
 import Crescimento from './pages/Crescimento.jsx'
@@ -27,6 +28,8 @@ import { resolveApiBase } from './utils/apiBase'
 
 const API_BASE = resolveApiBase()
 const AUTH_BYPASS = false
+const IDLE_TIMEOUT_MS = 60 * 60 * 1000
+const LAST_ACTIVITY_KEY = 'adminLastActivity'
 
 const statusLabels = {
   novo: 'Novo',
@@ -61,6 +64,7 @@ const routes = [
   { path: '/entrega', label: 'Entrega', code: 'EN' },
   { path: '/usuarios', label: 'Usuarios', code: 'US' },
   { path: '/financeiro', label: 'Financeiro', code: 'FN' },
+  { path: '/fiscal', label: 'Fiscal', code: 'FC' },
   { path: '/armazem', label: 'Armazém', code: 'AZ' },
   { path: '/clientes', label: 'Clientes', code: 'CL' },
   { path: '/crescimento', label: 'Crescimento', code: 'CR' },
@@ -70,7 +74,7 @@ const routes = [
 
 const navGroups = [
   { label: 'Operação', paths: ['/painel', '/pedidos', '/cardapio', '/cozinha', '/mesas', '/entrega'] },
-  { label: 'Gestão', paths: ['/usuarios', '/armazem', '/clientes', '/crescimento', '/promocoes'] },
+  { label: 'Gestão', paths: ['/usuarios', '/armazem', '/clientes', '/crescimento', '/promocoes', '/fiscal'] },
   { label: 'Canais', paths: ['/pedidos_ifood', '/whatsapp'] },
 ]
 
@@ -80,6 +84,10 @@ const roleLabels = {
   ATENDENTE: 'Atendente',
   ENTREGADOR: 'Entregador',
 }
+
+const rotasAtendente = ['/pedidos', '/cardapio', '/cozinha', '/mesas', '/entrega', '/whatsapp', '/motoboy/']
+const temAcessoPainel = (role) => ['ADMIN', 'GERENTE', 'ATENDENTE'].includes(role)
+const podeAcessarRota = (role, path) => ['ADMIN', 'GERENTE'].includes(role) || (role === 'ATENDENTE' && rotasAtendente.includes(path))
 
 const getInitials = (name) => {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean)
@@ -225,6 +233,7 @@ export default function App() {
   const [apiEnabled, setApiEnabled] = useState(true)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [currentUser, setCurrentUser] = useState(null)
+  const [userLoadError, setUserLoadError] = useState('')
   const [isNewOrderOpen, setIsNewOrderOpen] = useState(false)
   const [comandasPendentes, setComandasPendentes] = useState([])
   const [empresa, setEmpresa] = useState(null)
@@ -246,12 +255,16 @@ export default function App() {
     }
 
     const cached = window.localStorage.getItem('adminToken')
-    if (cached) {
+    const lastActivity = Number(window.localStorage.getItem(LAST_ACTIVITY_KEY))
+    if (cached && lastActivity > 0 && Date.now() - lastActivity < IDLE_TIMEOUT_MS) {
       setApiToken(cached)
       setIsAuthenticated(true)
       if (getInitialRoute() === '/login') {
         navigate('/painel')
       }
+    } else if (cached) {
+      window.localStorage.removeItem('adminToken')
+      window.localStorage.removeItem(LAST_ACTIVITY_KEY)
     }
 
     const handlePopstate = () => setRoute(getInitialRoute())
@@ -288,10 +301,16 @@ export default function App() {
 
   const invalidateSession = useCallback(() => {
     window.localStorage.removeItem('adminToken')
+    window.localStorage.removeItem(LAST_ACTIVITY_KEY)
     setApiToken(null)
     setApiEnabled(true)
     setIsAuthenticated(false)
     setCurrentUser(null)
+    setOrders([])
+    setUsers([])
+    setDashboardData(EMPTY_DASHBOARD_DATA)
+    setComandasPendentes([])
+    setEmpresa(null)
     navigate('/login')
   }, [navigate])
 
@@ -321,8 +340,16 @@ export default function App() {
       if (!payload.token) {
         return { ok: false, message: 'Token nao retornado.' }
       }
+      if (!temAcessoPainel(payload.user?.role)) {
+        await fetch(`${API_BASE}/auth/logout`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${payload.token}` },
+        })
+        return { ok: false, message: 'Este perfil não tem acesso ao painel. Entregadores devem usar o aplicativo Motoboy.' }
+      }
 
       window.localStorage.setItem('adminToken', payload.token)
+      window.localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()))
       setApiToken(payload.token)
       setApiEnabled(true)
       setIsAuthenticated(true)
@@ -336,37 +363,130 @@ export default function App() {
 
   const logout = useCallback(async () => {
     const token = await getAuthToken()
+    invalidateSession()
     if (token) {
-      await fetch(`${API_BASE}/auth/logout`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      }).catch(() => null)
+      try {
+        const response = await fetch(`${API_BASE}/auth/logout`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!response.ok && response.status !== 401) {
+          console.error('Nao foi possivel revogar a sessao:', response.status)
+        }
+      } catch (error) {
+        console.error('Nao foi possivel revogar a sessao:', error)
+      }
+    }
+  }, [getAuthToken, invalidateSession])
+
+  useEffect(() => {
+    if (!isAuthenticated || !apiToken) return undefined
+
+    let idleTimer
+    let activityTimer
+    let lastSent = 0
+    let lastActivity = Number(window.localStorage.getItem(LAST_ACTIVITY_KEY))
+
+    const expire = () => {
+      window.clearTimeout(idleTimer)
+      const sharedActivity = Number(window.localStorage.getItem(LAST_ACTIVITY_KEY))
+      lastActivity = Math.max(lastActivity, sharedActivity || 0)
+      const remaining = IDLE_TIMEOUT_MS - (Date.now() - lastActivity)
+      if (remaining > 0) {
+        idleTimer = window.setTimeout(expire, remaining)
+      } else {
+        void logout()
+      }
     }
 
-    window.localStorage.removeItem('adminToken')
-    setApiToken(null)
-    setIsAuthenticated(false)
-    setCurrentUser(null)
-    navigate('/login')
-  }, [getAuthToken, navigate])
+    const sendActivity = () => {
+      activityTimer = undefined
+      lastSent = Date.now()
+      fetch(`${API_BASE}/auth/activity`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiToken}`, Accept: 'application/json' },
+      }).then((response) => {
+        if (response.status === 401 && window.localStorage.getItem('adminToken') === apiToken) {
+          invalidateSession()
+        } else if (!response.ok) {
+          console.error('Nao foi possivel registrar a atividade da sessao:', response.status)
+        }
+      }).catch((error) => console.error('Nao foi possivel registrar a atividade da sessao:', error))
+    }
+
+    const recordActivity = () => {
+      const now = Date.now()
+      const sharedActivity = Number(window.localStorage.getItem(LAST_ACTIVITY_KEY))
+      lastActivity = Math.max(lastActivity, sharedActivity || 0)
+      if (now - lastActivity >= IDLE_TIMEOUT_MS) {
+        void logout()
+        return
+      }
+      lastActivity = now
+      window.localStorage.setItem(LAST_ACTIVITY_KEY, String(now))
+      window.clearTimeout(idleTimer)
+      idleTimer = window.setTimeout(expire, IDLE_TIMEOUT_MS)
+
+      if (now - lastSent >= 1000) {
+        window.clearTimeout(activityTimer)
+        sendActivity()
+      } else if (!activityTimer) {
+        activityTimer = window.setTimeout(sendActivity, 1000 - (now - lastSent))
+      }
+    }
+
+    const handleStorage = (event) => {
+      if (event.key === 'adminToken' && event.newValue !== apiToken) {
+        setApiToken(null)
+        setIsAuthenticated(false)
+        setCurrentUser(null)
+        setOrders([])
+        setUsers([])
+        setDashboardData(EMPTY_DASHBOARD_DATA)
+        setComandasPendentes([])
+        setEmpresa(null)
+        navigate('/login')
+      }
+    }
+
+    const events = ['pointerdown', 'pointermove', 'keydown', 'scroll', 'touchstart']
+    events.forEach((event) => window.addEventListener(event, recordActivity, { passive: true }))
+    window.addEventListener('storage', handleStorage)
+    window.addEventListener('focus', expire)
+    expire()
+
+    return () => {
+      window.clearTimeout(idleTimer)
+      window.clearTimeout(activityTimer)
+      events.forEach((event) => window.removeEventListener(event, recordActivity))
+      window.removeEventListener('storage', handleStorage)
+      window.removeEventListener('focus', expire)
+    }
+  }, [apiToken, invalidateSession, isAuthenticated, logout, navigate])
 
   const fetchCurrentUser = useCallback(async () => {
     const token = await getAuthToken()
     if (!token) return
 
-    const response = await fetch(`${API_BASE}/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-
-    if (response.status === 401) {
-      invalidateSession()
-      return
+    setUserLoadError('')
+    try {
+      const response = await fetch(`${API_BASE}/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (response.status === 401) {
+        invalidateSession()
+        return
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const payload = await response.json()
+      if (!payload || !temAcessoPainel(payload.role)) {
+        invalidateSession()
+        return
+      }
+      setCurrentUser(mapApiUser(payload))
+    } catch (error) {
+      setUserLoadError(`Não foi possível verificar seu acesso: ${error.message}`)
     }
-
-    if (!response.ok) return
-
-    const payload = await response.json()
-    if (payload) setCurrentUser(mapApiUser(payload))
   }, [getAuthToken, invalidateSession])
 
   const fetchOrdersFromApi = useCallback(async () => {
@@ -498,7 +618,7 @@ export default function App() {
     const token = await getAuthToken()
     if (!token) {
       setApiEnabled(false)
-      return
+      return false
     }
 
     const response = await fetch(`${API_BASE}/admin/dashboard`, {
@@ -507,11 +627,12 @@ export default function App() {
 
     if (!response.ok) {
       setApiEnabled(false)
-      return
+      return false
     }
 
     const payload = await response.json()
     setDashboardData(mergeDashboardData(payload))
+    return true
   }, [getAuthToken])
 
   const fetchAdminInsight = useCallback(async (path) => {
@@ -904,6 +1025,32 @@ export default function App() {
     [getAuthToken],
   )
 
+  const requestFiscal = useCallback(async (path, method = 'GET', body) => {
+    try {
+      const token = await getAuthToken()
+      if (!token) return { ok: false, message: 'Sem token de acesso.' }
+      const response = await fetch(`${API_BASE}/admin/${path}`, {
+        method,
+        headers: {
+          Authorization: ['Be', 'arer'].join('') + ' ' + token,
+          Accept: 'application/json',
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      })
+      if (!response.headers.get('content-type')?.toLowerCase().includes('application/json')) {
+        return { ok: false, message: `O serviço fiscal retornou uma resposta inesperada (HTTP ${response.status}). Verifique a API e sua configuração.` }
+      }
+      const payload = await response.json()
+      if (!response.ok) {
+        return { ok: false, message: Object.values(payload.errors || {}).flat()[0] || payload.message || `Erro HTTP ${response.status}.` }
+      }
+      return { ok: true, data: payload }
+    } catch (error) {
+      return { ok: false, message: `Não foi possível comunicar com o serviço fiscal: ${error.message}` }
+    }
+  }, [getAuthToken])
+
   const fetchProdutos = useCallback(async () => {
     const token = await getAuthToken()
     if (!token) return null
@@ -1019,6 +1166,27 @@ export default function App() {
     },
     [getAuthToken],
   )
+
+  const atualizarCategoria = useCallback(async (id, nome) => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+
+    const response = await fetch(`${API_BASE}/admin/categorias/${id}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ nome }),
+    })
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => ({}))
+      return { ok: false, message: errorPayload.message || `Falha ao alterar categoria (HTTP ${response.status}).` }
+    }
+
+    return { ok: true, categoria: await response.json() }
+  }, [getAuthToken])
 
   const atualizarProduto = useCallback(
     async (produtoId, payload) => {
@@ -1231,6 +1399,36 @@ export default function App() {
     },
     [getAuthToken],
   )
+
+  const requestMesa = useCallback(async (path, method = 'GET', body) => {
+    const token = await getAuthToken()
+    if (!token) return { ok: false, message: 'Sem token de acesso.' }
+    let response
+    try {
+      response = await fetch(`${API_BASE}/admin/mesas${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      })
+    } catch (error) {
+      return { ok: false, message: `Não foi possível comunicar com o servidor: ${error.message}` }
+    }
+    let payload
+    try {
+      payload = await response.json()
+    } catch {
+      return { ok: false, message: `Resposta inesperada da API (HTTP ${response.status}).` }
+    }
+    if (!response.ok) return { ok: false, message: Object.values(payload.errors || {}).flat()[0] || payload.message || `Erro HTTP ${response.status}.` }
+    if (method !== 'GET') {
+      try {
+        if (!await fetchDashboardFromApi()) return { ok: true, data: payload.data, message: 'Alteração salva, mas não foi possível atualizar a lista de mesas.' }
+      } catch {
+        return { ok: true, data: payload.data, message: 'Alteração salva, mas não foi possível atualizar a lista de mesas.' }
+      }
+    }
+    return { ok: true, data: payload.data, message: payload.message || '' }
+  }, [getAuthToken, fetchDashboardFromApi])
 
   const liberarMesa = useCallback(
     async (mesaId) => {
@@ -1476,7 +1674,7 @@ export default function App() {
   }, [isAuthenticated, fetchCurrentUser])
 
   useEffect(() => {
-    if (!isAuthenticated || !apiEnabled) return
+    if (!isAuthenticated || !apiEnabled || !currentUser || !podeAcessarRota(currentUser.role, route)) return
 
     void fetchDashboardFromApi()
 
@@ -1490,7 +1688,7 @@ export default function App() {
 
     if (route === '/mesas') {
       void fetchComandasPendentes()
-      void fetchEmpresa()
+      if (currentUser.role !== 'ATENDENTE') void fetchEmpresa()
     }
   }, [
     apiEnabled,
@@ -1500,6 +1698,7 @@ export default function App() {
     fetchOrdersFromApi,
     fetchUsersFromApi,
     isAuthenticated,
+    currentUser,
     route,
   ])
 
@@ -1508,7 +1707,7 @@ export default function App() {
   // Mesas tambem entra aqui: cliente escaneando o QR e ocupando a mesa precisa refletir no
   // painel sem o admin precisar recarregar a pagina.
   useEffect(() => {
-    if (!isAuthenticated || !apiEnabled) return undefined
+    if (!isAuthenticated || !apiEnabled || !currentUser || !podeAcessarRota(currentUser.role, route)) return undefined
 
     const precisaAoVivo =
       route === '/pedidos' || route === '/painel' || route === '/cozinha' || route === '/entrega' || route === '/mesas'
@@ -1526,7 +1725,7 @@ export default function App() {
     }, route === '/mesas' ? 5000 : 8000) // mesas: conta acompanhada em tempo real pelo QR
 
     return () => clearInterval(timer)
-  }, [apiEnabled, isAuthenticated, route, fetchOrdersFromApi, fetchDashboardFromApi, fetchComandasPendentes])
+  }, [apiEnabled, isAuthenticated, currentUser, route, fetchOrdersFromApi, fetchDashboardFromApi, fetchComandasPendentes])
 
   const todayLabel = useMemo(
     () =>
@@ -1574,6 +1773,7 @@ export default function App() {
       '/entrega': 'Rotas, motoboys e monitoramento de entregas',
       '/usuarios': 'Gestao de perfis e acessos internos',
       '/financeiro': 'Fluxo de caixa, pagamentos e fechamento diário',
+      '/fiscal': 'Rascunhos e referências fiscais da empresa',
       '/relatorios': 'Indicadores operacionais e financeiros consolidados',
       '/armazem': 'Estoque atual, movimentações e previsão de reposição',
       '/clientes': 'Base de clientes, segmentos e campanhas',
@@ -1623,6 +1823,13 @@ export default function App() {
     )
   }
 
+  if (!currentUser) {
+    return <main className="page">{userLoadError ? <><div className="login-error" role="alert">{userLoadError}</div><button className="btn btn-light" type="button" onClick={fetchCurrentUser}>Tentar novamente</button><button className="btn btn-light" type="button" onClick={logout}>Sair</button></> : 'Verificando acesso...'}</main>
+  }
+
+  const rotaPermitida = podeAcessarRota(currentUser.role, route)
+  const rotasVisiveis = routes.filter((item) => podeAcessarRota(currentUser.role, item.path))
+
   return (
     <div className="app-shell">
       {mobileMenuOpen && (
@@ -1652,12 +1859,12 @@ export default function App() {
           </button>
         </div>
         <nav className="nav">
-          {navGroups.map((group) => (
+          {navGroups.filter((group) => group.paths.some((path) => podeAcessarRota(currentUser.role, path))).map((group) => (
             <div className="nav-group" key={group.label}>
               <span className="nav-group-label">{group.label}</span>
               {group.paths.map((path) => {
                 const routeItem = routes.find((item) => item.path === path)
-                if (!routeItem) return null
+                if (!routeItem || !podeAcessarRota(currentUser.role, path)) return null
                 return (
                   <button
                     key={routeItem.path}
@@ -1743,13 +1950,14 @@ export default function App() {
               }}
               aria-label="Ir para pagina"
             >
-              {routes.map((routeItem) => (
+              {rotasVisiveis.map((routeItem) => (
                 <option key={routeItem.path} value={routeItem.path}>
                   {routeItem.label}
                 </option>
               ))}
             </select>
-            {route === '/pedidos' && (
+            {!rotaPermitida && <div className="notice notice-danger" role="alert">Você não tem acesso a esta tela. <button className="btn btn-light" type="button" onClick={() => navigate('/pedidos')}>Ir para Pedidos</button></div>}
+            {rotaPermitida && route === '/pedidos' && (
               <button className="btn btn-primary" type="button" onClick={() => setIsNewOrderOpen(true)}>
                 Novo Pedido
               </button>
@@ -1770,8 +1978,9 @@ export default function App() {
               onUpdateStatus={updateOrderStatus}
             />
           )}
-          {route === '/cardapio' && (
+          {rotaPermitida && route === '/cardapio' && (
             <Cardapio
+              somenteLeitura={currentUser.role === 'ATENDENTE'}
               onFetchProdutos={fetchProdutos}
               onFetchCategorias={fetchCategorias}
               onCriarProduto={criarProduto}
@@ -1782,9 +1991,11 @@ export default function App() {
               onFetchIngredientes={fetchIngredientes}
               onFetchReceita={fetchReceitaProduto}
               onSalvarReceita={salvarReceitaProduto}
+              requestFiscal={requestFiscal}
             />
           )}
-          {route === '/promocoes' && (
+          {rotaPermitida && route === '/fiscal' && <FiscalContabil requestFiscal={requestFiscal} />}
+          {rotaPermitida && route === '/promocoes' && (
             <Promocoes
               onFetchPromocoes={fetchPromocoes}
               onFetchProdutos={fetchProdutos}
@@ -1792,7 +2003,7 @@ export default function App() {
               onSalvarPromocao={salvarPromocao}
             />
           )}
-          {route === '/usuarios' && (
+          {rotaPermitida && route === '/usuarios' && (
             <Usuarios
               users={users}
               onCreateUser={createUser}
@@ -1802,7 +2013,7 @@ export default function App() {
               onRegeneratePairingCode={regeneratePairingCode}
             />
           )}
-          {route === '/painel' && (
+          {rotaPermitida && route === '/painel' && (
             <Painel
               orders={orders}
               users={users}
@@ -1810,34 +2021,35 @@ export default function App() {
               tablesData={dashboardData.tablesData}
             />
           )}
-          {route === '/cozinha' && (
+          {rotaPermitida && route === '/cozinha' && (
             <Cozinha
               orders={orders}
               kitchenData={dashboardData.kitchenData}
               statusLabels={statusLabels}
             />
           )}
-          {route === '/mesas' && (
+          {rotaPermitida && route === '/mesas' && (
             <Mesas
               tablesData={dashboardData.tablesData}
               comandasPendentes={comandasPendentes}
               onConfirmarPagamento={confirmarPagamentoComanda}
               empresa={empresa}
-              onUpdateEmpresa={updateEmpresa}
+              onUpdateEmpresa={currentUser.role === 'ATENDENTE' ? undefined : updateEmpresa}
               onFetchMesaDetalhe={fetchMesaDetalhe}
               onLiberarMesa={liberarMesa}
+              requestMesa={requestMesa}
               onAdicionarFilaEspera={adicionarNaFilaEspera}
               onRemoverFilaEspera={removerDaFilaEspera}
             />
           )}
-          {route === '/entrega' && (
+          {rotaPermitida && route === '/entrega' && (
             <Entrega
               orders={orders}
               deliveryData={dashboardData.deliveryData}
               onFetchEntregadorEntregas={fetchEntregadorEntregas}
             />
           )}
-          {(route === '/crescimento' || route === '/financeiro') && (
+          {rotaPermitida && (route === '/crescimento' || route === '/financeiro') && (
             <Crescimento
               key={route}
               financeData={dashboardData.financeData}
@@ -1850,8 +2062,8 @@ export default function App() {
               onAtualizarChecklist={atualizarChecklistFinanceiro}
             />
           )}
-          {route === '/relatorios' && <Relatorios onExportar={exportarRelatorio} />}
-          {route === '/armazem' && (
+          {rotaPermitida && route === '/relatorios' && <Relatorios onExportar={exportarRelatorio} />}
+          {rotaPermitida && route === '/armazem' && (
             <Compras
               key={route}
               initialTab="armazem"
@@ -1863,9 +2075,12 @@ export default function App() {
               onCriarIngrediente={criarIngrediente}
               onEditarIngrediente={editarIngrediente}
               onRegistrarMovimentoAvulso={registrarMovimentoAvulso}
+              onFetchCategorias={fetchCategorias}
+              onCriarCategoria={criarCategoria}
+              onAtualizarCategoria={atualizarCategoria}
             />
           )}
-          {route === '/clientes' && (
+          {rotaPermitida && route === '/clientes' && (
             <Clientes
               customersData={dashboardData.customersData}
               onFetchCustomers={fetchCustomers}
@@ -1874,8 +2089,8 @@ export default function App() {
               onDeleteCustomer={deleteCustomer}
             />
           )}
-          {route === '/pedidos_ifood' && <Pedidos_Ifood marketplaceData={dashboardData.marketplaceData} />}
-          {route === '/whatsapp' && (
+          {rotaPermitida && route === '/pedidos_ifood' && <Pedidos_Ifood marketplaceData={dashboardData.marketplaceData} />}
+          {rotaPermitida && route === '/whatsapp' && (
             <WhatsApp
               onFetchStatus={fetchWhatsappStatus}
               onCriarInstancia={criarWhatsappInstancia}

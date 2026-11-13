@@ -24,35 +24,24 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AdminDashboardController extends Controller
 {
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         $orders = Pedido::with(['cliente.usuario', 'mesa', 'itens.produto', 'entrega.entregador.usuario'])
             ->orderByDesc('dt_pedido')
             ->get();
 
         $users = User::whereIn('perfil', ['ADMIN', 'GERENTE', 'ENTREGADOR', 'ATENDENTE'])->get();
-        $tables = Mesa::with([
+        $companyId = (int) DB::table('empresa')->orderBy('id_empresa')->value('id_empresa');
+        $tables = Mesa::where('id_empresa', $companyId)->where('fl_ativa', true)->with([
             'pedidos' => fn ($query) => $query->orderByDesc('dt_pedido'),
             'comandaAberta.pedidos.cliente.usuario',
             'comandaAberta.pedidos.itens.produto',
         ])->orderBy('nr_mesa')->get();
-        $payments = Pagamento::with('pedido.mesa', 'pedido.cliente.usuario')->orderByDesc('dt_cadastro')->get();
         $couriers = Entregador::with(['usuario', 'avaliacoes', 'entregas' => fn ($query) => $query->orderByDesc('dt_atualizacao')])->get();
-        $companyId = (int) DB::table('empresa')->orderBy('id_empresa')->value('id_empresa');
         $waitingList = $this->buildWaitingList($companyId);
 
         $tablesSnapshot = $this->snapshot('tables');
-        $financeSnapshot = $this->snapshot('finance');
-        $reportsSnapshot = $this->snapshot('reports');
-        $marketplaceSnapshot = $this->snapshot('marketplace');
-        $whatsAppSnapshot = $this->snapshot('whatsapp');
-
-        return response()->json([
-            'panelData' => [
-                'alerts' => $this->buildAlerts($companyId),
-                'channels' => $this->buildChannelSummary($orders),
-                'timeline' => $this->buildTimeline($orders),
-            ],
+        $operacional = [
             'kitchenData' => [
                 'stations' => $this->buildKitchenStations($orders, $companyId),
                 'prepList' => $this->buildPrepList($orders),
@@ -66,6 +55,24 @@ class AdminDashboardController extends Controller
                 'couriers' => $this->buildCouriers($couriers),
                 'routes' => $this->buildRoutes($orders),
                 'incidents' => $this->buildDeliveryIncidents($orders),
+            ],
+        ];
+
+        if (strtoupper($request->user()->perfil) === 'ATENDENTE') {
+            return response()->json($operacional);
+        }
+
+        $payments = Pagamento::with('pedido.mesa', 'pedido.cliente.usuario')->orderByDesc('dt_cadastro')->get();
+        $financeSnapshot = $this->snapshot('finance');
+        $reportsSnapshot = $this->snapshot('reports');
+        $marketplaceSnapshot = $this->snapshot('marketplace');
+        $whatsAppSnapshot = $this->snapshot('whatsapp');
+
+        return response()->json(array_merge($operacional, [
+            'panelData' => [
+                'alerts' => $this->buildAlerts($companyId),
+                'channels' => $this->buildChannelSummary($orders),
+                'timeline' => $this->buildTimeline($orders),
             ],
             'financeData' => [
                 'kpis' => $this->buildFinanceKpis($payments),
@@ -86,7 +93,7 @@ class AdminDashboardController extends Controller
             ],
             'marketplaceData' => $marketplaceSnapshot,
             'whatsappData' => $whatsAppSnapshot,
-        ]);
+        ]));
     }
 
     /**

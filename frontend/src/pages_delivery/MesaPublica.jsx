@@ -379,7 +379,9 @@ export default function MesaPublica({ theme, onToggleTheme }) {
               <h3>Como podemos chamar você?</h3>
               <p>Seu pedido fica vinculado somente a esta sessão da mesa.</p>
               <form onSubmit={handleIdentificar}>
+                <label htmlFor="mesa-nome">Seu nome</label>
                 <input
+                  id="mesa-nome"
                   type="text"
                   placeholder="Seu nome"
                   value={nome}
@@ -387,7 +389,7 @@ export default function MesaPublica({ theme, onToggleTheme }) {
                   maxLength={150}
                   required
                 />
-                {erroIdentificacao && <small className="mp-error">{erroIdentificacao}</small>}
+                {erroIdentificacao && <small className="mp-error" role="alert">{erroIdentificacao}</small>}
                 <button className="mp-primary-btn" type="submit" disabled={identificando}>
                   {identificando ? 'Entrando...' : 'Continuar'}
                 </button>
@@ -706,7 +708,8 @@ export default function MesaPublica({ theme, onToggleTheme }) {
                     </div>
                   )}
 
-                  <select value={formaPagamento} onChange={(event) => setFormaPagamento(event.target.value)}>
+                  <label htmlFor="mesa-forma-pagamento">Forma de pagamento</label>
+                  <select id="mesa-forma-pagamento" value={formaPagamento} onChange={(event) => setFormaPagamento(event.target.value)}>
                     <option value="pix">Pix</option>
                     <option value="cartao">Cartão</option>
                     <option value="dinheiro">Dinheiro</option>

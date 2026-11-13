@@ -59,6 +59,9 @@ export default function App() {
         setRota(null)
       } else if (err instanceof ApiError && err.status === 401) {
         setIsAuthenticated(false)
+        setRota(null)
+      } else {
+        setToast(err instanceof ApiError ? err.message : 'Não foi possível carregar a rota.')
       }
     } finally {
       setRotaLoading(false)
@@ -97,6 +100,41 @@ export default function App() {
     },
     [refreshRota],
   )
+
+  const handleLogin = useCallback(async (email, password) => {
+    try {
+      const payload = await api.login(email, password)
+      if (!payload?.token) return { ok: false, message: 'Token não retornado pelo servidor.' }
+      setToken(payload.token)
+      setUserName(payload.user?.name || '')
+      setIsAuthenticated(true)
+      await refreshRota()
+      setView('rota')
+      return { ok: true, message: '' }
+    } catch (err) {
+      return { ok: false, message: err instanceof ApiError ? err.message : 'Não foi possível conectar ao servidor.' }
+    }
+  }, [refreshRota])
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined
+    let lastSent = 0
+    const activity = () => {
+      if (Date.now() - lastSent < 30000) return
+      lastSent = Date.now()
+      api.activity().catch((err) => {
+        if (err instanceof ApiError && err.status === 401) {
+          setIsAuthenticated(false)
+          setRota(null)
+        } else {
+          console.error('Não foi possível registrar a atividade da sessão:', err)
+        }
+      })
+    }
+    const events = ['pointerdown', 'keydown', 'scroll', 'touchstart']
+    events.forEach((event) => window.addEventListener(event, activity, { passive: true }))
+    return () => events.forEach((event) => window.removeEventListener(event, activity))
+  }, [isAuthenticated])
 
   const handleLogout = useCallback(async () => {
     await api.logout()
@@ -202,7 +240,7 @@ export default function App() {
   }
 
   if (!isAuthenticated) {
-    return <Pareamento onPair={handlePair} />
+    return <Pareamento onPair={handlePair} onLogin={handleLogin} />
   }
 
   const saudacao = userName ? `Ola, ${userName.split(' ')[0]}` : ''

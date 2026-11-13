@@ -51,6 +51,9 @@ class RotaController extends Controller
         ]);
 
         $entregador = $request->user()->entregador;
+        if (!$entregador) {
+            return response()->json(['message' => 'Usuário autenticado não é um entregador.'], 403);
+        }
         $rota = $entregador->rotas()->findOrFail($rotaId);
 
         foreach ($data['ordem'] as $posicao => $idEntrega) {

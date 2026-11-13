@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useId, useRef, useState } from 'react'
 import { buscarEnderecoPorCep, formatarCep } from '../utils/cep.js'
 
 /**
@@ -7,6 +7,9 @@ import { buscarEnderecoPorCep, formatarCep } from '../utils/cep.js'
  * endereco = null enquanto nao tiver um CEP valido resolvido.
  */
 export default function EnderecoPorCep({ onResolved, className = 'filter-group' }) {
+  const cepId = useId()
+  const numeroId = useId()
+  const consultaAtual = useRef(0)
   const [cep, setCep] = useState('')
   const [numero, setNumero] = useState('')
   const [endereco, setEndereco] = useState(null)
@@ -31,12 +34,14 @@ export default function EnderecoPorCep({ onResolved, className = 'filter-group' 
   }
 
   const handleCepChange = async (value) => {
+    const consulta = ++consultaAtual.current
     const formatado = formatarCep(value)
     setCep(formatado)
     setErroCep('')
 
     const digits = formatado.replace(/\D/g, '')
     if (digits.length !== 8) {
+      setBuscando(false)
       setEndereco(null)
       onResolved(null)
       return
@@ -44,6 +49,7 @@ export default function EnderecoPorCep({ onResolved, className = 'filter-group' 
 
     setBuscando(true)
     const resultado = await buscarEnderecoPorCep(digits)
+    if (consulta !== consultaAtual.current) return
     setBuscando(false)
 
     if (!resultado) {
@@ -65,8 +71,9 @@ export default function EnderecoPorCep({ onResolved, className = 'filter-group' 
   return (
     <>
       <div className={className}>
-        <label>CEP</label>
+        <label htmlFor={cepId}>CEP</label>
         <input
+          id={cepId}
           placeholder="00000-000"
           value={cep}
           onChange={(event) => handleCepChange(event.target.value)}
@@ -75,7 +82,7 @@ export default function EnderecoPorCep({ onResolved, className = 'filter-group' 
           required
         />
         {buscando && <small style={{ color: 'var(--muted)' }}>Buscando endereço...</small>}
-        {erroCep && <small style={{ color: 'var(--danger)' }}>{erroCep}</small>}
+        {erroCep && <small role="alert" style={{ color: 'var(--danger)' }}>{erroCep}</small>}
         {endereco && (
           <small style={{ color: 'var(--muted)' }}>
             {endereco.rua ? `${endereco.rua}, ` : ''}
@@ -84,8 +91,9 @@ export default function EnderecoPorCep({ onResolved, className = 'filter-group' 
         )}
       </div>
       <div className={className}>
-        <label>Número</label>
+        <label htmlFor={numeroId}>Número</label>
         <input
+          id={numeroId}
           placeholder="Número"
           value={numero}
           onChange={(event) => handleNumeroChange(event.target.value)}

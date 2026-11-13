@@ -48,4 +48,9 @@ class Produto extends Model
     {
         return $this->hasMany(ProdutoIngrediente::class, 'id_produto', 'id_produto');
     }
+
+    public function fiscal()
+    {
+        return $this->hasOne(ProdutoFiscal::class, 'id_produto', 'id_produto');
+    }
 }

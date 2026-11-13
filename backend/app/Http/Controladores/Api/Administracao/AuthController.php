@@ -13,6 +13,16 @@ class AuthController extends Controller
 {
     public function login(Request $request): JsonResponse
     {
+        return $this->loginComCredenciais($request, false);
+    }
+
+    public function loginMotoboy(Request $request): JsonResponse
+    {
+        return $this->loginComCredenciais($request, true);
+    }
+
+    private function loginComCredenciais(Request $request, bool $motoboy): JsonResponse
+    {
         $credentials = $request->validate([
             'email'    => ['required', 'email'],
             'password' => ['required', 'string'],
@@ -28,6 +38,13 @@ class AuthController extends Controller
             return response()->json(['message' => 'Usuario inativo.'], 403);
         }
 
+        if ($motoboy) {
+            if (!in_array(strtoupper($user->perfil), ['ADMIN', 'GERENTE', 'ATENDENTE'], true)) {
+                return response()->json(['message' => 'Use o pareamento para acessar como entregador.'], 403);
+            }
+            $user->entregador()->firstOrCreate([], ['fl_online' => false]);
+        }
+
         $token = $user->createToken(
             'api-token',
             ['*'],
@@ -37,7 +54,7 @@ class AuthController extends Controller
         return response()->json([
             'token' => $token,
             'user'  => $this->toPublic($user),
-        ]);
+        ])->header('Cache-Control', 'no-store');
     }
 
     /**
@@ -81,7 +98,7 @@ class AuthController extends Controller
         return response()->json([
             'token' => $token,
             'user'  => $this->toPublic($user),
-        ]);
+        ])->header('Cache-Control', 'no-store');
     }
 
     public function logout(Request $request): JsonResponse
@@ -95,7 +112,15 @@ class AuthController extends Controller
     {
         $user = $request->user();
 
-        return response()->json($user ? $this->toPublic($user) : null);
+        return response()->json($user ? $this->toPublic($user) : null)
+            ->header('Cache-Control', 'no-store');
+    }
+
+    public function activity(Request $request): JsonResponse
+    {
+        $request->user()->currentAccessToken()->forceFill(['last_used_at' => now()])->save();
+
+        return response()->json(null, 204);
     }
 
     private function toPublic(User $user): array

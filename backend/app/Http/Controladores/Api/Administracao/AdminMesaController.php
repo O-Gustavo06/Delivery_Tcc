@@ -10,12 +10,71 @@ use App\Models\Pedido;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class AdminMesaController extends Controller
 {
     private function empresaId(): int
     {
         return (int) DB::table('empresa')->orderBy('id_empresa')->value('id_empresa');
+    }
+
+    public function listarInativas(): JsonResponse
+    {
+        $mesas = Mesa::where('id_empresa', $this->empresaId())->where('fl_ativa', false)
+            ->orderBy('nr_mesa')->get(['id_mesa', 'nr_mesa', 'capacidade']);
+
+        return response()->json(['data' => $mesas]);
+    }
+
+    public function criar(Request $request): JsonResponse
+    {
+        $empresaId = $this->empresaId();
+        $mesa = DB::transaction(function () use ($request, $empresaId) {
+            $empresa = DB::table('empresa')->where('id_empresa', $empresaId)->lockForUpdate()->first();
+            if (! $empresa) {
+                abort(422, 'Nenhuma empresa cadastrada.');
+            }
+            $data = $request->validate([
+                'numero' => ['required', 'integer', 'min:1', 'max:2147483647', Rule::unique('mesa', 'nr_mesa')->where('id_empresa', $empresaId)],
+                'capacidade' => ['required', 'integer', 'min:1', 'max:2147483647'],
+            ], ['numero.unique' => 'Este número já está cadastrado. Se a mesa estiver inativa, reative-a.']);
+
+            return Mesa::create([
+                'id_empresa' => $empresaId,
+                'nr_mesa' => $data['numero'],
+                'capacidade' => $data['capacidade'],
+                'status_ocupacao' => 'LIVRE',
+                'fl_ativa' => true,
+                'qr_code_token' => Str::random(48),
+            ]);
+        });
+
+        return response()->json(['data' => ['id' => $mesa->id_mesa, 'numero' => $mesa->nr_mesa]], 201);
+    }
+
+    public function desativar(int $id): JsonResponse
+    {
+        DB::transaction(function () use ($id) {
+            $mesa = Mesa::where('id_empresa', $this->empresaId())->where('fl_ativa', true)
+                ->lockForUpdate()->findOrFail($id);
+            if ($mesa->status_ocupacao !== 'LIVRE' || $mesa->comandaAberta()->exists() ||
+                $mesa->pedidos()->whereNotIn('status', ['FINALIZADO', 'CANCELADO'])->exists()) {
+                abort(409, 'A mesa precisa estar livre e sem pedidos ou comandas em andamento para ser desativada.');
+            }
+            $mesa->update(['fl_ativa' => false]);
+        });
+
+        return response()->json(['message' => 'Mesa desativada. O histórico foi preservado.']);
+    }
+
+    public function reativar(int $id): JsonResponse
+    {
+        $mesa = Mesa::where('id_empresa', $this->empresaId())->where('fl_ativa', false)->findOrFail($id);
+        $mesa->update(['fl_ativa' => true]);
+
+        return response()->json(['message' => 'Mesa reativada.']);
     }
 
     /**

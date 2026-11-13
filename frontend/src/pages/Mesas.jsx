@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 
 const statusMap = {
@@ -606,6 +606,101 @@ function ListaModal({ titulo, subtitulo, colunas, linhas, textoVazio, onClose })
   )
 }
 
+function GerenciarMesas({ mesas, requestMesa }) {
+  const [numero, setNumero] = useState('')
+  const [capacidade, setCapacidade] = useState('4')
+  const [inativas, setInativas] = useState([])
+  const [erro, setErro] = useState('')
+  const [erroInativas, setErroInativas] = useState('')
+  const [aviso, setAviso] = useState('')
+  const [ocupado, setOcupado] = useState(false)
+  const sequenciaInativas = useRef(0)
+
+  const carregarInativas = useCallback(async () => {
+    const sequencia = ++sequenciaInativas.current
+    const resultado = await requestMesa('/inativas')
+    if (sequencia !== sequenciaInativas.current) return
+    if (!resultado.ok) {
+      setErroInativas(resultado.message)
+      return
+    }
+    setInativas(resultado.data)
+    setErroInativas('')
+  }, [requestMesa])
+
+  useEffect(() => {
+    void carregarInativas()
+    return () => { sequenciaInativas.current += 1 }
+  }, [carregarInativas])
+
+  const adicionar = async (event) => {
+    event.preventDefault()
+    setErro(''); setAviso(''); setOcupado(true)
+    const resultado = await requestMesa('', 'POST', { numero: Number(numero), capacidade: Number(capacidade) })
+    setOcupado(false)
+    if (!resultado.ok) { setErro(resultado.message); return }
+    setNumero('')
+    setAviso(resultado.message || 'Mesa adicionada.')
+  }
+
+  const alterarAtivacao = async (mesa, reativar) => {
+    const nome = reativar ? mesa.nr_mesa : mesa.number
+    if (!reativar && !window.confirm(`Desativar a mesa ${nome}? O histórico será preservado e o QR Code ficará indisponível até a reativação.`)) return
+    setErro(''); setAviso(''); setOcupado(true)
+    const resultado = await requestMesa(`/${reativar ? mesa.id_mesa : mesa.id}/${reativar ? 'reativar' : 'desativar'}`, 'PATCH')
+    if (!resultado.ok) {
+      setErro(resultado.message)
+    } else {
+      setAviso(resultado.message || (reativar ? 'Mesa reativada.' : 'Mesa desativada.'))
+      await carregarInativas()
+    }
+    setOcupado(false)
+  }
+
+  return (
+    <article className="card section-card no-print">
+      <div className="section-head">
+        <div><h2>Gerenciar mesas</h2><p>Adicione mesas ou desative as que não estão em uso. O histórico é preservado.</p></div>
+      </div>
+      <form onSubmit={adicionar} className="form-grid-2">
+        <label className="filter-group">Número da mesa
+          <input type="number" min="1" max="2147483647" step="1" required value={numero} onChange={(event) => setNumero(event.target.value)} />
+        </label>
+        <label className="filter-group">Quantidade de lugares
+          <input type="number" min="1" max="2147483647" step="1" required value={capacidade} onChange={(event) => setCapacidade(event.target.value)} />
+        </label>
+        <button className="btn btn-primary" type="submit" disabled={ocupado}>Adicionar mesa</button>
+      </form>
+      {erro && <div className="login-error" role="alert">{erro}</div>}
+      {aviso && <p role="status">{aviso}</p>}
+      <details>
+        <summary>Desativar mesas</summary>
+        <p>Somente mesas livres e sem pedidos ou comandas em andamento podem ser desativadas.</p>
+        {mesas.length === 0 && <p>Nenhuma mesa ativa cadastrada.</p>}
+        {mesas.map((mesa) => (
+          <div className="item-row" key={mesa.id} style={{ gridTemplateColumns: '1fr auto', marginTop: 8 }}>
+            <span>Mesa {mesa.number} · {statusMap[mesa.status]?.label || mesa.status}</span>
+            <button type="button" className="btn btn-light" disabled={ocupado || mesa.status !== 'free'} onClick={() => alterarAtivacao(mesa, false)}
+              aria-label={`Desativar mesa ${mesa.number}`}>Desativar</button>
+          </div>
+        ))}
+      </details>
+      <details>
+        <summary>Mesas desativadas</summary>
+        {erroInativas && <div className="login-error" role="alert">{erroInativas} <button type="button" className="btn btn-light" onClick={carregarInativas}>Tentar novamente</button></div>}
+        {!erroInativas && inativas.length === 0 && <p>Nenhuma mesa desativada.</p>}
+        {inativas.map((mesa) => (
+          <div className="item-row" key={mesa.id_mesa} style={{ gridTemplateColumns: '1fr auto', marginTop: 8 }}>
+            <span>Mesa {mesa.nr_mesa} · {mesa.capacidade} lugares</span>
+            <button type="button" className="btn btn-light" disabled={ocupado} onClick={() => alterarAtivacao(mesa, true)}
+              aria-label={`Reativar mesa ${mesa.nr_mesa}`}>Reativar</button>
+          </div>
+        ))}
+      </details>
+    </article>
+  )
+}
+
 export default function Mesas({
   tablesData,
   comandasPendentes = [],
@@ -616,6 +711,7 @@ export default function Mesas({
   onLiberarMesa,
   onAdicionarFilaEspera,
   onRemoverFilaEspera,
+  requestMesa,
 }) {
   const [mesaAberta, setMesaAberta] = useState(null)
   const [listaAberta, setListaAberta] = useState(null)
@@ -653,6 +749,8 @@ export default function Mesas({
           <div><span>Fila de espera</span><strong>{tablesData.summary.waiting}</strong></div><div className="metric-icon badge-sun">FL</div>
         </button>
       </section>
+
+      {requestMesa && <GerenciarMesas mesas={todasAsMesas} requestMesa={requestMesa} />}
 
       <div className="no-print" style={{ display: 'grid', gap: 20 }}>
         {onConfirmarPagamento && <ComandasPendentes comandas={comandasPendentes} onConfirmar={onConfirmarPagamento} />}

@@ -57,6 +57,28 @@ class AdminProdutoController extends Controller
         ], 201);
     }
 
+    public function atualizarCategoria(Request $request, string $id): JsonResponse
+    {
+        $categoria = Categoria::where('id_empresa', $this->empresaId())->find((int) $id);
+
+        if (!$categoria) {
+            return response()->json(['message' => 'Categoria não encontrada.'], 404);
+        }
+
+        $data = $request->validate([
+            'nome' => ['required', 'string', 'max:100'],
+        ]);
+
+        $categoria->nm_categoria = $data['nome'];
+        $categoria->save();
+
+        return response()->json([
+            'id' => $categoria->id_categoria,
+            'nome' => $categoria->nm_categoria,
+            'ativa' => (bool) $categoria->fl_ativa,
+        ]);
+    }
+
     public function listarProdutos(Request $request): JsonResponse
     {
         $produtos = Produto::with('categoria')

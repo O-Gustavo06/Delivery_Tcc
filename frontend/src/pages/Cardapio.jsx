@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { resolveAssetUrl } from '../utils/apiBase'
+import FiscalProduto from './FiscalProduto.jsx'
 
 const formatMoney = (value) =>
   Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -251,7 +252,7 @@ function EditarProdutoModal({ produto, categorias, onEditar, onClose }) {
         <div className="modal-head">
           <div>
             <h2>Editar item</h2>
-            <p>Altere os dados do produto no cardapio.</p>
+            <p>ID do produto: {produto.id} · Altere os dados do produto no cardapio.</p>
           </div>
           <button className="btn btn-light" type="button" onClick={onClose}>
             Fechar
@@ -557,6 +558,7 @@ function ExcluirProdutoModal({ produto, onConfirmar, onClose }) {
 }
 
 export default function Cardapio({
+  somenteLeitura = false,
   onFetchProdutos,
   onFetchCategorias,
   onCriarProduto,
@@ -567,6 +569,7 @@ export default function Cardapio({
   onFetchIngredientes,
   onFetchReceita,
   onSalvarReceita,
+  requestFiscal,
 }) {
   const [produtos, setProdutos] = useState([])
   const [categorias, setCategorias] = useState([])
@@ -576,13 +579,14 @@ export default function Cardapio({
   const [produtoReceita, setProdutoReceita] = useState(null)
   const [produtoExcluir, setProdutoExcluir] = useState(null)
   const [produtoEditar, setProdutoEditar] = useState(null)
+  const [produtoFiscal, setProdutoFiscal] = useState(null)
   const [filtroCategoria, setFiltroCategoria] = useState('all')
 
   const carregarTudo = async () => {
     const [produtosResp, categoriasResp, ingredientesResp] = await Promise.all([
       onFetchProdutos(),
       onFetchCategorias(),
-      onFetchIngredientes(),
+      somenteLeitura ? Promise.resolve(null) : onFetchIngredientes(),
     ])
     if (produtosResp?.data) setProdutos(produtosResp.data)
     if (categoriasResp?.data) setCategorias(categoriasResp.data)
@@ -649,9 +653,9 @@ export default function Cardapio({
             <h2>Itens do cardapio</h2>
             <p>Produtos cadastrados aparecem automaticamente no cardapio publico e na mesa.</p>
           </div>
-          <button className="btn btn-primary" type="button" onClick={() => setIsModalOpen(true)}>
+          {!somenteLeitura && <button className="btn btn-primary" type="button" onClick={() => setIsModalOpen(true)}>
             Novo item
-          </button>
+          </button>}
         </div>
 
         <div className="status-tabs">
@@ -681,7 +685,7 @@ export default function Cardapio({
         <div className="table-grid">
           {filtrados.map((produto) => (
             <div className="table-card" key={produto.id}>
-              <button
+              {!somenteLeitura && <button
                 type="button"
                 className="table-card-delete"
                 onClick={() => setProdutoExcluir(produto)}
@@ -689,7 +693,7 @@ export default function Cardapio({
                 title="Excluir item"
               >
                 ×
-              </button>
+              </button>}
               {produto.urlImagem && (
                 <img
                   src={resolveAssetUrl(produto.urlImagem)}
@@ -703,12 +707,13 @@ export default function Cardapio({
                   {produto.ativo ? 'Ativo' : 'Inativo'}
                 </span>
               </div>
+              <p>ID do produto: {produto.id}</p>
               <p>{produto.categoria.nome}</p>
               {produto.descricao && <p>{produto.descricao}</p>}
               <div className="order-total" style={{ alignItems: 'flex-start', textAlign: 'left', borderTop: 'none', paddingTop: 0 }}>
                 <strong>{formatMoney(produto.preco)}</strong>
               </div>
-              <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+              {!somenteLeitura && <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
                 <button
                   className="btn btn-light card-action-btn"
                   type="button"
@@ -716,6 +721,10 @@ export default function Cardapio({
                   onClick={() => setProdutoEditar(produto)}
                 >
                   Editar
+                </button>
+                <button className="btn btn-light card-action-btn" type="button"
+                  onClick={() => setProdutoFiscal(produto)}>
+                  Tributação
                 </button>
                 <div className="item-row" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
                   <button
@@ -735,7 +744,7 @@ export default function Cardapio({
                     Receita
                   </button>
                 </div>
-              </div>
+              </div>}
             </div>
           ))}
         </div>
@@ -775,6 +784,9 @@ export default function Cardapio({
           onEditar={handleEditarProduto}
           onClose={() => setProdutoEditar(null)}
         />
+      )}
+      {produtoFiscal && (
+        <FiscalProduto produto={produtoFiscal} requestFiscal={requestFiscal} onClose={() => setProdutoFiscal(null)} />
       )}
     </>
   )

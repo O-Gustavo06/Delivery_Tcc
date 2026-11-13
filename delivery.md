@@ -2,6 +2,11 @@
 Será o sistema principal de gerenciamento do restaurante. Nele será possível acompanhar:
 Pedidos presenciais e delivery
 Controle de mesas livres e ocupadas
+Cadastro e edição de categorias de produtos em Armazém, compartilhadas com o cardápio
+Acesso por perfil: administrador e gerente acessam todo o painel; atendimento acessa
+Pedidos, Cardápio (somente visualização), Cozinha, Mesas, Entrega e WhatsApp.
+O atendente também pode entrar no aplicativo Motoboy com e-mail e senha e cuidar das
+próprias entregas. O perfil entregador acessa apenas o aplicativo Motoboy por pareamento.
 Gestão da rotina do restaurante
 Acompanhamento dos motoboys
 Quantidade de pedidos e demandas
@@ -47,6 +52,9 @@ O sistema identifica automaticamente a mesa ocupada
 Os pedidos realizados são vinculados à mesa
 Os pedidos são enviados diretamente para a cozinha para preparo
 Controle automático de ocupação das mesas
+Na tela Mesas, o administrador cadastra número e capacidade, desativa mesas
+livres e pode reativá-las. A desativação preserva o histórico e impede o uso
+do QR Code; mesas com pedidos ou comandas em andamento não podem ser desativadas.
 
 
 
